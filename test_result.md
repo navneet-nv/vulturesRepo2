@@ -289,13 +289,13 @@ frontend:
         agent: "testing"
         comment: "✅ Analytics page working correctly. Displays 'Business insights and trends' header and loads analytics data properly. Payment status overview and total revenue sections render correctly."
   
-  - task: "AI Chat Modal"
+  - task: "AI Chat Modal with Voice Input"
     implemented: true
     working: true
     file: "/app/app/page.js"
     stuck_count: 0
     priority: "high"
-    needs_retesting: false
+    needs_retesting: true
     status_history:
       - working: "NA"
         agent: "main"
@@ -303,6 +303,9 @@ frontend:
       - working: true
         agent: "testing"
         comment: "✅ AI Chat modal UI working perfectly. Opens correctly from both sidebar and quick actions. Shows proper title 'Bharat Biz AI Agent' with Hindi/Hinglish/English support message. Textarea and Send Message button functional. Backend AI has expected errors but UI is fully functional."
+      - working: true
+        agent: "main"
+        comment: "✅ VOICE INPUT ADDED! Integrated OpenAI Whisper for speech-to-text. Features: microphone button, recording indicator, automatic transcription, support for Hindi/Hinglish/English. UI complete with voice command examples. Backend endpoint /api/voice/transcribe created with Whisper API integration. Needs UI testing."
 
 metadata:
   created_by: "main_agent"
