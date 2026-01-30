@@ -420,9 +420,9 @@ This project addresses **Neurathon 2026 Problem Statement 2: The Bharat Biz-Agen
 - [x] WhatsApp reminders
 
 ### Phase 2 (Planned)
-- [ ] PDF invoice generation
-- [ ] Email integration
-- [ ] Voice input with Whisper
+- [x] PDF invoice generation
+- [x] Email integration
+- [x] Voice input with Whisper
 - [ ] OCR for handwritten bills
 - [ ] Inventory management
 
