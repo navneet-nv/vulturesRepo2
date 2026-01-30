@@ -857,6 +857,16 @@ export default function Dashboard() {
                 <p>• "मेरी total revenue कितनी है?"</p>
               </div>
             </div>
+
+            <div className="p-3 bg-orange-50 rounded-lg border border-orange-200">
+              <p className="text-sm font-medium text-orange-900 mb-2">🎤 How to Enable Microphone:</p>
+              <div className="space-y-1 text-xs text-orange-800">
+                <p><strong>Chrome/Edge:</strong> Click 🔒 in address bar → Site settings → Allow Microphone</p>
+                <p><strong>Firefox:</strong> Click 🔒 in address bar → Permissions → Microphone → Allow</p>
+                <p><strong>Safari:</strong> Safari menu → Settings → Websites → Microphone → Allow</p>
+                <p className="mt-2 text-orange-900 font-medium">⚠️ Microphone requires HTTPS or localhost</p>
+              </div>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
