@@ -450,10 +450,48 @@ Respond in JSON format with: {"intent": "intent_name", "params": {}, "message": 
       }
     }
     
-    // Voice to text
+    // Voice to text with Whisper
     if (path === 'voice/transcribe') {
-      // This would handle audio file upload and transcription with Whisper
-      return Response.json({ message: 'Voice transcription endpoint ready' });
+      try {
+        const formData = await request.formData();
+        const audioFile = formData.get('audio');
+        
+        if (!audioFile) {
+          return Response.json({ error: 'No audio file provided' }, { status: 400 });
+        }
+        
+        // Convert to blob for OpenAI Whisper API
+        const audioBuffer = await audioFile.arrayBuffer();
+        const audioBlob = new Blob([audioBuffer], { type: 'audio/webm' });
+        
+        // Create form data for Whisper API
+        const whisperFormData = new FormData();
+        whisperFormData.append('file', audioBlob, 'audio.webm');
+        whisperFormData.append('model', 'whisper-1');
+        whisperFormData.append('language', 'hi'); // Hindi but also understands Hinglish
+        
+        // Call OpenAI Whisper API
+        const whisperResponse = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${OPENAI_API_KEY}`
+          },
+          body: whisperFormData
+        });
+        
+        if (!whisperResponse.ok) {
+          const error = await whisperResponse.text();
+          console.error('Whisper API error:', error);
+          return Response.json({ error: 'Transcription failed' }, { status: 500 });
+        }
+        
+        const transcription = await whisperResponse.json();
+        return Response.json({ text: transcription.text });
+        
+      } catch (error) {
+        console.error('Voice transcription error:', error);
+        return Response.json({ error: error.message }, { status: 500 });
+      }
     }
     
     return Response.json({ error: 'Route not found' }, { status: 404 });
