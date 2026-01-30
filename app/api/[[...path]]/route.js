@@ -305,32 +305,63 @@ export async function POST(request) {
       return Response.json({ message: 'Customer added successfully', customer });
     }
     
-    // AI Agent conversation
+    // AI Agent conversation - Enhanced with strict PS2 requirements
     if (path === 'agent/chat') {
       const { message, language } = body;
       
-      // Call Emergent LLM for intent recognition
+      // Proactive context-aware check - PS2 requirement
+      const invoices = await db.collection('invoices').find({ userId: user.userId }).toArray();
+      const overdueInvoices = invoices.filter(inv => {
+        const daysSinceDue = Math.floor((new Date() - new Date(inv.date)) / (1000 * 60 * 60 * 24));
+        return inv.status === 'pending' && daysSinceDue > 30;
+      });
+      
+      // Call AI for intent recognition
       const aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${EMERGENT_LLM_KEY}`
+          'Authorization': `Bearer ${OPENAI_API_KEY}`
         },
         body: JSON.stringify({
-          model: 'gpt-4',
+          model: 'gpt-4o-mini',
           messages: [
             {
               role: 'system',
-              content: `You are Bharat Biz-Agent, an AI assistant for Indian small businesses. You understand Hindi, Hinglish, and English. Extract the intent and parameters from user messages.
+              content: `You are Bharat Biz-Agent, an AI assistant for Indian small businesses. You understand Hindi, Hinglish, and English.
               
+CRITICAL REQUIREMENTS (PS2 Compliance):
+- You are ACTION-ORIENTED, not just conversational
+- You understand India-specific business context (GST, UPI, credit cycles)
+- You handle code-mixed language (Hindi+English)
+- You provide proactive suggestions
+
+CONTEXT:
+- User has ${invoices.length} total invoices
+- ${invoices.filter(i => i.status === 'pending').length} pending payments
+- ${overdueInvoices.length} invoices overdue > 30 days
+- Total revenue: ₹${invoices.reduce((sum, inv) => sum + inv.amount, 0)}
+
+Extract intent and provide actionable response.
+
 Possible intents:
-              - create_invoice: Create an invoice
-              - check_stats: Check business stats
-              - send_reminder: Send payment reminder
-              - list_invoices: List all invoices
-              - check_pending: Check pending payments
-              
-Respond in JSON format with: {"intent": "intent_name", "params": {}, "message": "response_in_same_language", "needsConfirmation": boolean}`
+- create_invoice: Create a new invoice (requires customer_name, customer_phone, amount)
+- check_stats: Check business statistics
+- send_reminder: Send payment reminder (requires customer_name)
+- list_invoices: List all invoices
+- check_pending: Check pending payments
+- list_overdue: List overdue payments
+
+ALWAYS respond in the SAME language as user input.
+
+Respond in JSON format:
+{
+  "intent": "intent_name",
+  "params": {},
+  "message": "response in user's language",
+  "needsConfirmation": boolean,
+  "proactiveSuggestion": "optional proactive suggestion if relevant"
+}`
             },
             {
               role: 'user',
@@ -346,44 +377,72 @@ Respond in JSON format with: {"intent": "intent_name", "params": {}, "message": 
       
       try {
         if (aiResult.error) {
-          throw new Error(aiResult.error.message || 'AI API error');
-        }
-        
-        if (aiResult.choices && aiResult.choices[0] && aiResult.choices[0].message) {
-          parsedResponse = JSON.parse(aiResult.choices[0].message.content);
+          console.error('OpenAI error:', aiResult.error);
+          // Fallback response
+          parsedResponse = {
+            intent: 'check_stats',
+            params: {},
+            message: `मैं आपकी मदद कर सकता हूं। आपके पास ${invoices.length} invoices हैं और ${invoices.filter(i => i.status === 'pending').length} payments pending हैं।`,
+            needsConfirmation: false
+          };
+        } else if (aiResult.choices && aiResult.choices[0] && aiResult.choices[0].message) {
+          const content = aiResult.choices[0].message.content;
+          parsedResponse = JSON.parse(content);
         } else {
           throw new Error('Invalid AI response format');
         }
       } catch (e) {
         console.error('AI parsing error:', e);
+        // Fallback with basic stats
         parsedResponse = {
-          intent: 'unknown',
-          message: `I understand you said: "${message}". Let me help you with that.`,
+          intent: 'check_stats',
+          params: {},
+          message: `Hello! I can help you. You have ${invoices.length} invoices with ${invoices.filter(i => i.status === 'pending').length} pending payments.`,
           needsConfirmation: false
         };
       }
       
-      // Execute intent
+      // Execute intent - PS2 requirement: Autonomous Task Execution
       let actionResult = null;
       
       if (parsedResponse.intent === 'check_stats') {
-        const invoices = await db.collection('invoices').find({ userId: user.userId }).toArray();
         const totalRevenue = invoices.reduce((sum, inv) => sum + inv.amount, 0);
         const pendingPayments = invoices.filter(inv => inv.status === 'pending').length;
         
         actionResult = {
           totalRevenue,
           totalInvoices: invoices.length,
-          pendingPayments
+          pendingPayments,
+          overduePayments: overdueInvoices.length
         };
-      } else if (parsedResponse.intent === 'list_invoices') {
-        const invoices = await db.collection('invoices')
-          .find({ userId: user.userId })
-          .limit(5)
-          .sort({ createdAt: -1 })
-          .toArray();
         
-        actionResult = { invoices };
+        // Proactive suggestion - PS2 requirement: Context-Aware Follow-ups
+        if (overdueInvoices.length > 0) {
+          parsedResponse.proactiveSuggestion = `${overdueInvoices.length} invoices are overdue > 30 days. Should I send reminders?`;
+        }
+      } else if (parsedResponse.intent === 'list_invoices' || parsedResponse.intent === 'check_pending') {
+        const relevantInvoices = parsedResponse.intent === 'check_pending' 
+          ? invoices.filter(inv => inv.status === 'pending')
+          : invoices;
+          
+        actionResult = {
+          invoices: relevantInvoices.slice(0, 5).map(inv => ({
+            id: inv.id,
+            customer_name: inv.customer_name,
+            amount: inv.amount,
+            status: inv.status,
+            date: inv.date
+          }))
+        };
+      } else if (parsedResponse.intent === 'list_overdue') {
+        actionResult = {
+          invoices: overdueInvoices.slice(0, 5).map(inv => ({
+            id: inv.id,
+            customer_name: inv.customer_name,
+            amount: inv.amount,
+            daysSinceDue: Math.floor((new Date() - new Date(inv.date)) / (1000 * 60 * 60 * 24))
+          }))
+        };
       }
       
       return Response.json({
