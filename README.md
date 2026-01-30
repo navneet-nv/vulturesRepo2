@@ -367,6 +367,27 @@ Chat with AI agent.
 #### POST `/api/payments/{invoiceId}/remind`
 Send WhatsApp payment reminder.
 
+#### POST `/api/voice/transcribe`
+Transcribe audio to text using OpenAI Whisper.
+
+**Request Body (FormData):**
+```
+audio: <audio file (webm format)>
+```
+
+**Response:**
+```json
+{
+  "text": "Transcribed text in Hindi/Hinglish/English"
+}
+```
+
+**Supported Languages:**
+- Hindi (हिंदी)
+- Hinglish (Hindi + English mix)
+- English
+- Automatic language detection
+
 ---
 
 ## 🎯 Problem Statement Alignment
