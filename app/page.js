@@ -26,6 +26,9 @@ export default function Dashboard() {
   const [showAIChat, setShowAIChat] = useState(false);
   const [aiMessage, setAiMessage] = useState('');
   const [aiResponse, setAiResponse] = useState(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [mediaRecorder, setMediaRecorder] = useState(null);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const [invoiceForm, setInvoiceForm] = useState({
     customer_name: '',
     customer_phone: '',
