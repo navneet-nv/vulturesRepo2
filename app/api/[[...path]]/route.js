@@ -345,11 +345,20 @@ Respond in JSON format with: {"intent": "intent_name", "params": {}, "message": 
       let parsedResponse;
       
       try {
-        parsedResponse = JSON.parse(aiResult.choices[0].message.content);
+        if (aiResult.error) {
+          throw new Error(aiResult.error.message || 'AI API error');
+        }
+        
+        if (aiResult.choices && aiResult.choices[0] && aiResult.choices[0].message) {
+          parsedResponse = JSON.parse(aiResult.choices[0].message.content);
+        } else {
+          throw new Error('Invalid AI response format');
+        }
       } catch (e) {
+        console.error('AI parsing error:', e);
         parsedResponse = {
           intent: 'unknown',
-          message: aiResult.choices[0].message.content,
+          message: `I understand you said: "${message}". Let me help you with that.`,
           needsConfirmation: false
         };
       }
