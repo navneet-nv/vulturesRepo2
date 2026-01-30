@@ -223,6 +223,12 @@ export default function Dashboard() {
 
   const startRecording = async () => {
     try {
+      // Check if browser supports getUserMedia
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        toast.error('Your browser does not support voice recording. Please use Chrome, Firefox, or Edge.');
+        return;
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const recorder = new MediaRecorder(stream);
       const audioChunks = [];
@@ -240,10 +246,21 @@ export default function Dashboard() {
       recorder.start();
       setMediaRecorder(recorder);
       setIsRecording(true);
-      toast.info('🎤 Recording... Speak in Hindi, Hinglish, or English');
+      toast.success('🎤 Recording... Speak now!');
     } catch (error) {
-      toast.error('Microphone access denied');
       console.error('Recording error:', error);
+      
+      if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+        toast.error('🚫 Microphone access denied! Please allow microphone access in your browser settings.', {
+          duration: 5000
+        });
+      } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+        toast.error('🎤 No microphone found! Please connect a microphone and try again.');
+      } else if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
+        toast.error('⚠️ Microphone is being used by another application. Please close other apps and try again.');
+      } else {
+        toast.error('❌ Unable to access microphone. Error: ' + error.message);
+      }
     }
   };
 
