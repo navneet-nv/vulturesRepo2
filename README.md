@@ -202,11 +202,21 @@ Navigate to [http://localhost:3000](http://localhost:3000)
 2. Type or speak your command
 3. AI understands Hindi, Hinglish, and English
 
-**Example Commands:**
+**Voice Input (Speech-to-Text):**
+1. Click the microphone button (🎤) in the AI chat modal
+2. Allow microphone access when prompted
+3. Speak clearly in Hindi, Hinglish, or English
+4. Click "Stop Recording" when done
+5. System automatically transcribes using OpenAI Whisper
+6. Transcribed text appears in the text box
+7. Click "Send Message" to get AI response
+
+**Example Voice Commands:**
 ```
 Hindi: "Kitne total invoices hain?"
 Hinglish: "Rahul ko 500 rupees ka bill bhejo"
 English: "Show me pending payments"
+Mixed: "मेरी total revenue कितनी है?"
 ```
 
 **What AI Agent Can Do:**
@@ -215,6 +225,13 @@ English: "Show me pending payments"
 - ✅ Create invoices (with confirmation)
 - ✅ Send payment reminders
 - ✅ Answer business questions
+
+**Voice Recognition Features:**
+- 🗣️ Multi-language support (Hindi, Hinglish, English)
+- 🎯 High accuracy with OpenAI Whisper
+- ⚡ Real-time transcription
+- 🔴 Visual recording indicator
+- ✅ Transcription confirmation
 
 ---
 
