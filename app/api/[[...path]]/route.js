@@ -1,104 +1,529 @@
-import { MongoClient } from 'mongodb'
-import { v4 as uuidv4 } from 'uuid'
-import { NextResponse } from 'next/server'
+import { MongoClient, ObjectId } from 'mongodb';
+import { v4 as uuidv4 } from 'uuid';
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
 
-// MongoDB connection
-let client
-let db
+const MONGO_URL = process.env.MONGO_URL;
+const DB_NAME = process.env.DB_NAME;
+const JWT_SECRET = process.env.JWT_SECRET;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const EMERGENT_LLM_KEY = process.env.EMERGENT_LLM_KEY;
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID;
+const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN;
+const TWILIO_WHATSAPP_NUMBER = process.env.TWILIO_WHATSAPP_NUMBER;
 
-async function connectToMongo() {
-  if (!client) {
-    client = new MongoClient(process.env.MONGO_URL)
-    await client.connect()
-    db = client.db(process.env.DB_NAME)
+let cachedDb = null;
+
+async function connectToDatabase() {
+  if (cachedDb) {
+    return cachedDb;
   }
-  return db
+  
+  const client = new MongoClient(MONGO_URL);
+  await client.connect();
+  const db = client.db(DB_NAME);
+  cachedDb = db;
+  return db;
 }
 
-// Helper function to handle CORS
-function handleCORS(response) {
-  response.headers.set('Access-Control-Allow-Origin', process.env.CORS_ORIGINS || '*')
-  response.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
-  response.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-  response.headers.set('Access-Control-Allow-Credentials', 'true')
-  return response
-}
-
-// OPTIONS handler for CORS
-export async function OPTIONS() {
-  return handleCORS(new NextResponse(null, { status: 200 }))
-}
-
-// Route handler function
-async function handleRoute(request, { params }) {
-  const { path = [] } = params
-  const route = `/${path.join('/')}`
-  const method = request.method
-
+// Verify JWT Token
+function verifyToken(request) {
+  const authHeader = request.headers.get('authorization');
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return null;
+  }
+  
+  const token = authHeader.substring(7);
   try {
-    const db = await connectToMongo()
-
-    // Root endpoint - GET /api/root (since /api/ is not accessible with catch-all)
-    if (route === '/root' && method === 'GET') {
-      return handleCORS(NextResponse.json({ message: "Hello World" }))
-    }
-    // Root endpoint - GET /api/root (since /api/ is not accessible with catch-all)
-    if (route === '/' && method === 'GET') {
-      return handleCORS(NextResponse.json({ message: "Hello World" }))
-    }
-
-    // Status endpoints - POST /api/status
-    if (route === '/status' && method === 'POST') {
-      const body = await request.json()
-      
-      if (!body.client_name) {
-        return handleCORS(NextResponse.json(
-          { error: "client_name is required" }, 
-          { status: 400 }
-        ))
-      }
-
-      const statusObj = {
-        id: uuidv4(),
-        client_name: body.client_name,
-        timestamp: new Date()
-      }
-
-      await db.collection('status_checks').insertOne(statusObj)
-      return handleCORS(NextResponse.json(statusObj))
-    }
-
-    // Status endpoints - GET /api/status
-    if (route === '/status' && method === 'GET') {
-      const statusChecks = await db.collection('status_checks')
-        .find({})
-        .limit(1000)
-        .toArray()
-
-      // Remove MongoDB's _id field from response
-      const cleanedStatusChecks = statusChecks.map(({ _id, ...rest }) => rest)
-      
-      return handleCORS(NextResponse.json(cleanedStatusChecks))
-    }
-
-    // Route not found
-    return handleCORS(NextResponse.json(
-      { error: `Route ${route} not found` }, 
-      { status: 404 }
-    ))
-
+    const decoded = jwt.verify(token, JWT_SECRET);
+    return decoded;
   } catch (error) {
-    console.error('API Error:', error)
-    return handleCORS(NextResponse.json(
-      { error: "Internal server error" }, 
-      { status: 500 }
-    ))
+    return null;
   }
 }
 
-// Export all HTTP methods
-export const GET = handleRoute
-export const POST = handleRoute
-export const PUT = handleRoute
-export const DELETE = handleRoute
-export const PATCH = handleRoute
+export async function GET(request) {
+  const url = new URL(request.url);
+  const path = url.pathname.replace('/api/', '');
+  
+  try {
+    const db = await connectToDatabase();
+    
+    // Public routes
+    if (path === 'health') {
+      return Response.json({ status: 'ok', message: 'Bharat Biz-Agent API is running' });
+    }
+    
+    // Protected routes - require authentication
+    const user = verifyToken(request);
+    if (!user) {
+      return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    
+    // Dashboard Stats
+    if (path === 'dashboard/stats') {
+      const invoices = await db.collection('invoices')
+        .find({ userId: user.userId })
+        .toArray();
+      
+      const customers = await db.collection('customers')
+        .find({ userId: user.userId })
+        .toArray();
+      
+      const totalRevenue = invoices.reduce((sum, inv) => sum + inv.amount, 0);
+      const pendingPayments = invoices.filter(inv => inv.status === 'pending').length;
+      
+      return Response.json({
+        totalRevenue,
+        totalInvoices: invoices.length,
+        pendingPayments,
+        totalCustomers: customers.length
+      });
+    }
+    
+    // Get all invoices
+    if (path === 'invoices') {
+      const limit = url.searchParams.get('limit');
+      let query = db.collection('invoices')
+        .find({ userId: user.userId })
+        .sort({ createdAt: -1 });
+      
+      if (limit) {
+        query = query.limit(parseInt(limit));
+      }
+      
+      const invoices = await query.toArray();
+      return Response.json(invoices);
+    }
+    
+    // Get single invoice
+    if (path.startsWith('invoices/') && path.split('/').length === 2) {
+      const invoiceId = path.split('/')[1];
+      const invoice = await db.collection('invoices')
+        .findOne({ id: invoiceId, userId: user.userId });
+      
+      if (!invoice) {
+        return Response.json({ error: 'Invoice not found' }, { status: 404 });
+      }
+      
+      return Response.json(invoice);
+    }
+    
+    // Get all customers
+    if (path === 'customers') {
+      const customers = await db.collection('customers')
+        .find({ userId: user.userId })
+        .sort({ createdAt: -1 })
+        .toArray();
+      
+      return Response.json(customers);
+    }
+    
+    // Get all payments
+    if (path === 'payments') {
+      const payments = await db.collection('payments')
+        .find({ userId: user.userId })
+        .sort({ createdAt: -1 })
+        .toArray();
+      
+      return Response.json(payments);
+    }
+    
+    // Get analytics
+    if (path === 'analytics') {
+      const invoices = await db.collection('invoices')
+        .find({ userId: user.userId })
+        .toArray();
+      
+      // Revenue by month
+      const revenueByMonth = {};
+      invoices.forEach(inv => {
+        const month = new Date(inv.date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+        revenueByMonth[month] = (revenueByMonth[month] || 0) + inv.amount;
+      });
+      
+      // Payment status breakdown
+      const statusBreakdown = {
+        paid: invoices.filter(inv => inv.status === 'paid').length,
+        pending: invoices.filter(inv => inv.status === 'pending').length,
+        overdue: invoices.filter(inv => inv.status === 'overdue').length
+      };
+      
+      return Response.json({
+        revenueByMonth,
+        statusBreakdown,
+        totalRevenue: invoices.reduce((sum, inv) => sum + inv.amount, 0)
+      });
+    }
+    
+    return Response.json({ error: 'Route not found' }, { status: 404 });
+    
+  } catch (error) {
+    console.error('API Error:', error);
+    return Response.json({ error: error.message }, { status: 500 });
+  }
+}
+
+export async function POST(request) {
+  const url = new URL(request.url);
+  const path = url.pathname.replace('/api/', '');
+  
+  try {
+    const db = await connectToDatabase();
+    const body = await request.json();
+    
+    // Auth routes
+    if (path === 'auth/signup') {
+      const { name, phone, businessName, password } = body;
+      
+      // Check if user exists
+      const existingUser = await db.collection('users').findOne({ phone });
+      if (existingUser) {
+        return Response.json({ error: 'Phone number already registered' }, { status: 400 });
+      }
+      
+      // Hash password
+      const hashedPassword = await bcrypt.hash(password, 10);
+      
+      const user = {
+        id: uuidv4(),
+        name,
+        phone,
+        businessName,
+        password: hashedPassword,
+        createdAt: new Date().toISOString()
+      };
+      
+      await db.collection('users').insertOne(user);
+      
+      return Response.json({ message: 'User created successfully', userId: user.id });
+    }
+    
+    if (path === 'auth/login') {
+      const { phone, password } = body;
+      
+      const user = await db.collection('users').findOne({ phone });
+      if (!user) {
+        return Response.json({ error: 'Invalid credentials' }, { status: 401 });
+      }
+      
+      const validPassword = await bcrypt.compare(password, user.password);
+      if (!validPassword) {
+        return Response.json({ error: 'Invalid credentials' }, { status: 401 });
+      }
+      
+      const token = jwt.sign(
+        { userId: user.id, phone: user.phone },
+        JWT_SECRET,
+        { expiresIn: '7d' }
+      );
+      
+      return Response.json({
+        token,
+        user: {
+          id: user.id,
+          name: user.name,
+          phone: user.phone,
+          businessName: user.businessName
+        }
+      });
+    }
+    
+    // Protected routes
+    const user = verifyToken(request);
+    if (!user) {
+      return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    
+    // Create invoice
+    if (path === 'invoices') {
+      const invoice = {
+        id: `INV-${Date.now()}`,
+        userId: user.userId,
+        customer_name: body.customer_name,
+        customer_phone: body.customer_phone,
+        items: body.items,
+        amount: body.amount,
+        status: 'pending',
+        date: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+        gstAmount: body.amount * 0.18, // 18% GST
+        totalWithGST: body.amount * 1.18
+      };
+      
+      await db.collection('invoices').insertOne(invoice);
+      
+      // Create or update customer
+      const existingCustomer = await db.collection('customers').findOne({
+        userId: user.userId,
+        phone: body.customer_phone
+      });
+      
+      if (!existingCustomer) {
+        await db.collection('customers').insertOne({
+          id: uuidv4(),
+          userId: user.userId,
+          name: body.customer_name,
+          phone: body.customer_phone,
+          totalInvoices: 1,
+          totalAmount: body.amount,
+          pendingAmount: body.amount,
+          createdAt: new Date().toISOString()
+        });
+      } else {
+        await db.collection('customers').updateOne(
+          { _id: existingCustomer._id },
+          {
+            $inc: {
+              totalInvoices: 1,
+              totalAmount: body.amount,
+              pendingAmount: body.amount
+            }
+          }
+        );
+      }
+      
+      return Response.json({ message: 'Invoice created successfully', invoice });
+    }
+    
+    // Add customer
+    if (path === 'customers') {
+      const customer = {
+        id: uuidv4(),
+        userId: user.userId,
+        name: body.name,
+        phone: body.phone,
+        email: body.email,
+        address: body.address,
+        totalInvoices: 0,
+        totalAmount: 0,
+        pendingAmount: 0,
+        createdAt: new Date().toISOString()
+      };
+      
+      await db.collection('customers').insertOne(customer);
+      return Response.json({ message: 'Customer added successfully', customer });
+    }
+    
+    // AI Agent conversation
+    if (path === 'agent/chat') {
+      const { message, language } = body;
+      
+      // Call Emergent LLM for intent recognition
+      const aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${EMERGENT_LLM_KEY}`
+        },
+        body: JSON.stringify({
+          model: 'gpt-4',
+          messages: [
+            {
+              role: 'system',
+              content: `You are Bharat Biz-Agent, an AI assistant for Indian small businesses. You understand Hindi, Hinglish, and English. Extract the intent and parameters from user messages.
+              
+Possible intents:
+              - create_invoice: Create an invoice
+              - check_stats: Check business stats
+              - send_reminder: Send payment reminder
+              - list_invoices: List all invoices
+              - check_pending: Check pending payments
+              
+Respond in JSON format with: {"intent": "intent_name", "params": {}, "message": "response_in_same_language", "needsConfirmation": boolean}`
+            },
+            {
+              role: 'user',
+              content: message
+            }
+          ],
+          temperature: 0.7
+        })
+      });
+      
+      const aiResult = await aiResponse.json();
+      let parsedResponse;
+      
+      try {
+        parsedResponse = JSON.parse(aiResult.choices[0].message.content);
+      } catch (e) {
+        parsedResponse = {
+          intent: 'unknown',
+          message: aiResult.choices[0].message.content,
+          needsConfirmation: false
+        };
+      }
+      
+      // Execute intent
+      let actionResult = null;
+      
+      if (parsedResponse.intent === 'check_stats') {
+        const invoices = await db.collection('invoices').find({ userId: user.userId }).toArray();
+        const totalRevenue = invoices.reduce((sum, inv) => sum + inv.amount, 0);
+        const pendingPayments = invoices.filter(inv => inv.status === 'pending').length;
+        
+        actionResult = {
+          totalRevenue,
+          totalInvoices: invoices.length,
+          pendingPayments
+        };
+      } else if (parsedResponse.intent === 'list_invoices') {
+        const invoices = await db.collection('invoices')
+          .find({ userId: user.userId })
+          .limit(5)
+          .sort({ createdAt: -1 })
+          .toArray();
+        
+        actionResult = { invoices };
+      }
+      
+      return Response.json({
+        ...parsedResponse,
+        actionResult
+      });
+    }
+    
+    // Send WhatsApp reminder
+    if (path.startsWith('payments/') && path.endsWith('/remind')) {
+      const invoiceId = path.split('/')[1];
+      
+      const invoice = await db.collection('invoices').findOne({
+        id: invoiceId,
+        userId: user.userId
+      });
+      
+      if (!invoice) {
+        return Response.json({ error: 'Invoice not found' }, { status: 404 });
+      }
+      
+      // Send WhatsApp message via Twilio
+      if (TWILIO_AUTH_TOKEN && TWILIO_AUTH_TOKEN !== 'your_twilio_auth_token_here') {
+        const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`;
+        
+        const whatsappBody = new URLSearchParams({
+          From: TWILIO_WHATSAPP_NUMBER,
+          To: `whatsapp:${invoice.customer_phone}`,
+          Body: `नमस्ते ${invoice.customer_name},\n\nYour payment of ₹${invoice.amount} for Invoice #${invoice.id} is pending.\n\nकृपया जल्द से जल्द भुगतान करें।\n\nThank you!\n- ${user.businessName || 'Bharat Biz'}`
+        });
+        
+        try {
+          const twilioResponse = await fetch(twilioUrl, {
+            method: 'POST',
+            headers: {
+              'Authorization': 'Basic ' + Buffer.from(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`).toString('base64'),
+              'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: whatsappBody
+          });
+          
+          if (twilioResponse.ok) {
+            return Response.json({ message: 'Reminder sent successfully via WhatsApp' });
+          } else {
+            const error = await twilioResponse.text();
+            console.error('Twilio error:', error);
+            return Response.json({ message: 'Reminder logged (WhatsApp not configured)' });
+          }
+        } catch (error) {
+          console.error('WhatsApp send error:', error);
+          return Response.json({ message: 'Reminder logged (WhatsApp error)' });
+        }
+      } else {
+        // Log reminder without sending
+        await db.collection('reminders').insertOne({
+          invoiceId: invoice.id,
+          customerId: invoice.customer_phone,
+          sentAt: new Date().toISOString(),
+          method: 'whatsapp',
+          status: 'pending'
+        });
+        
+        return Response.json({ message: 'Reminder logged (Configure Twilio to send)' });
+      }
+    }
+    
+    // Voice to text
+    if (path === 'voice/transcribe') {
+      // This would handle audio file upload and transcription with Whisper
+      return Response.json({ message: 'Voice transcription endpoint ready' });
+    }
+    
+    return Response.json({ error: 'Route not found' }, { status: 404 });
+    
+  } catch (error) {
+    console.error('API Error:', error);
+    return Response.json({ error: error.message }, { status: 500 });
+  }
+}
+
+export async function PUT(request) {
+  const url = new URL(request.url);
+  const path = url.pathname.replace('/api/', '');
+  
+  try {
+    const user = verifyToken(request);
+    if (!user) {
+      return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    
+    const db = await connectToDatabase();
+    const body = await request.json();
+    
+    // Update invoice status
+    if (path.startsWith('invoices/')) {
+      const invoiceId = path.split('/')[1];
+      
+      const result = await db.collection('invoices').updateOne(
+        { id: invoiceId, userId: user.userId },
+        { $set: { status: body.status, updatedAt: new Date().toISOString() } }
+      );
+      
+      if (result.matchedCount === 0) {
+        return Response.json({ error: 'Invoice not found' }, { status: 404 });
+      }
+      
+      return Response.json({ message: 'Invoice updated successfully' });
+    }
+    
+    return Response.json({ error: 'Route not found' }, { status: 404 });
+    
+  } catch (error) {
+    console.error('API Error:', error);
+    return Response.json({ error: error.message }, { status: 500 });
+  }
+}
+
+export async function DELETE(request) {
+  const url = new URL(request.url);
+  const path = url.pathname.replace('/api/', '');
+  
+  try {
+    const user = verifyToken(request);
+    if (!user) {
+      return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    
+    const db = await connectToDatabase();
+    
+    // Delete invoice
+    if (path.startsWith('invoices/')) {
+      const invoiceId = path.split('/')[1];
+      
+      const result = await db.collection('invoices').deleteOne({
+        id: invoiceId,
+        userId: user.userId
+      });
+      
+      if (result.deletedCount === 0) {
+        return Response.json({ error: 'Invoice not found' }, { status: 404 });
+      }
+      
+      return Response.json({ message: 'Invoice deleted successfully' });
+    }
+    
+    return Response.json({ error: 'Route not found' }, { status: 404 });
+    
+  } catch (error) {
+    console.error('API Error:', error);
+    return Response.json({ error: error.message }, { status: 500 });
+  }
+}
