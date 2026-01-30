@@ -765,21 +765,53 @@ export default function Dashboard() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>🤖 Bharat Biz AI Agent</DialogTitle>
-            <p className="text-sm text-gray-600">Ask me anything in Hindi, Hinglish, or English!</p>
+            <p className="text-sm text-gray-600">Ask me anything in Hindi, Hinglish, or English! 🗣️</p>
           </DialogHeader>
 
           <div className="space-y-4">
-            <Textarea
-              value={aiMessage}
-              onChange={(e) => setAiMessage(e.target.value)}
-              placeholder="Try: 'Rahul ko 500 rupees ka bill bhejo' or 'Kitne pending payments hain?'"
-              rows={4}
-            />
+            <div className="flex gap-2">
+              <Textarea
+                value={aiMessage}
+                onChange={(e) => setAiMessage(e.target.value)}
+                placeholder="Try: 'Rahul ko 500 rupees ka bill bhejo' or 'Kitne pending payments hain?'"
+                rows={4}
+                className="flex-1"
+                disabled={isRecording || isTranscribing}
+              />
+              <div className="flex flex-col gap-2">
+                <Button
+                  onClick={isRecording ? stopRecording : startRecording}
+                  variant={isRecording ? "destructive" : "outline"}
+                  size="icon"
+                  className={`h-12 w-12 ${isRecording ? 'animate-pulse' : ''}`}
+                  disabled={isTranscribing}
+                >
+                  <Mic size={24} />
+                </Button>
+                {isRecording && (
+                  <span className="text-xs text-red-600 font-medium text-center">
+                    Recording...
+                  </span>
+                )}
+                {isTranscribing && (
+                  <span className="text-xs text-blue-600 font-medium text-center">
+                    Transcribing...
+                  </span>
+                )}
+              </div>
+            </div>
 
-            <Button onClick={handleAIChat} className="w-full">
-              <Send className="mr-2" size={18} />
-              Send Message
-            </Button>
+            <div className="flex gap-2">
+              <Button onClick={handleAIChat} className="flex-1" disabled={isRecording || isTranscribing}>
+                <Send className="mr-2" size={18} />
+                Send Message
+              </Button>
+              {isRecording && (
+                <Button onClick={stopRecording} variant="destructive">
+                  Stop Recording
+                </Button>
+              )}
+            </div>
 
             {aiResponse && (
               <div className="p-4 bg-blue-50 rounded-lg">
@@ -798,6 +830,16 @@ export default function Dashboard() {
                 )}
               </div>
             )}
+
+            <div className="p-3 bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg border border-purple-200">
+              <p className="text-sm font-medium text-purple-900 mb-2">💡 Voice Commands Examples:</p>
+              <div className="space-y-1 text-xs text-purple-800">
+                <p>• "Kitne total invoices hain?"</p>
+                <p>• "Rahul ko payment reminder bhejo"</p>
+                <p>• "Show me pending payments"</p>
+                <p>• "मेरी total revenue कितनी है?"</p>
+              </div>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
