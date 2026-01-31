@@ -245,6 +245,50 @@ export async function POST(request) {
       });
     }
     
+    // Retell AI Webhook - Voice Layer Integration (PUBLIC ENDPOINT)
+    if (path === 'retell-webhook') {
+      try {
+        // Get transcript from Retell AI
+        const { transcript, call_id, user_id } = body;
+        
+        if (!transcript) {
+          return Response.json({ 
+            response: 'Sorry, I did not catch that. Please repeat.',
+            end_call: false 
+          });
+        }
+        
+        console.log('Retell AI Voice Input:', transcript);
+        
+        // Use simple response for now (no auth needed for demo)
+        let agentResponse = '';
+        
+        const lowerTranscript = transcript.toLowerCase();
+        
+        if (lowerTranscript.includes('dashboard') || lowerTranscript.includes('stats')) {
+          agentResponse = 'To access your dashboard, please login through the web interface first. You can say commands like show invoices, pending payments, or customers.';
+        } else if (lowerTranscript.includes('hello') || lowerTranscript.includes('hi') || lowerTranscript.includes('namaste')) {
+          agentResponse = 'नमस्ते! Welcome to Bharat Biz-Agent. I am your AI business assistant. How can I help you today?';
+        } else {
+          agentResponse = 'I understand. For full functionality, please use our web interface or WhatsApp chat. I can help with general business queries.';
+        }
+        
+        console.log('Retell AI Response:', agentResponse);
+        
+        return Response.json({
+          response: agentResponse,
+          end_call: false
+        });
+        
+      } catch (error) {
+        console.error('Retell webhook error:', error);
+        return Response.json({
+          response: 'Sorry, technical issue. Please try again.',
+          end_call: false
+        });
+      }
+    }
+    
     // Protected routes
     const user = verifyToken(request);
     if (!user) {
