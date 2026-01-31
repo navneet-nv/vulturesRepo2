@@ -554,6 +554,210 @@ Respond in JSON format:
       }
     }
     
+    // Retell AI Webhook - Voice Layer Integration
+    if (path === 'retell-webhook') {
+      try {
+        // Get transcript from Retell AI
+        const { transcript, call_id, user_id } = body;
+        
+        if (!transcript) {
+          return Response.json({ 
+            response: 'Sorry, I did not catch that. Please repeat.',
+            end_call: false 
+          });
+        }
+        
+        console.log('Retell AI Voice Input:', transcript);
+        
+        // Process through Bharat Biz-Agent AI
+        const lowerTranscript = transcript.toLowerCase();
+        let agentResponse = '';
+        let actionData = null;
+        
+        // Handle different intents
+        if (lowerTranscript.includes('dashboard') || lowerTranscript.includes('stats') || lowerTranscript.includes('overview')) {
+          // Dashboard stats
+          const stats = await db.collection('invoices')
+            .aggregate([
+              { $group: {
+                _id: null,
+                totalRevenue: { $sum: '$amount' },
+                totalCount: { $sum: 1 },
+                pendingCount: { 
+                  $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] }
+                }
+              }}
+            ]).toArray();
+          
+          const customers = await db.collection('customers').countDocuments();
+          
+          const stat = stats[0] || { totalRevenue: 0, totalCount: 0, pendingCount: 0 };
+          
+          agentResponse = `आपका business dashboard यह है: ` +
+            `Total revenue है ${stat.totalRevenue} rupees. ` +
+            `आपके पास ${stat.totalCount} invoices हैं, जिनमें से ${stat.pendingCount} pending हैं। ` +
+            `और आपके ${customers} customers हैं।`;\
+          
+          actionData = {
+            totalRevenue: stat.totalRevenue,
+            totalInvoices: stat.totalCount,
+            pendingPayments: stat.pendingCount,
+            totalCustomers: customers
+          };
+          
+        } else if (lowerTranscript.includes('invoice') || lowerTranscript.includes('bill')) {
+          // List invoices
+          const invoices = await db.collection('invoices')
+            .find()
+            .sort({ createdAt: -1 })
+            .limit(3)
+            .toArray();
+          
+          if (invoices.length === 0) {
+            agentResponse = 'आपके पास कोई invoices नहीं हैं। Would you like to create one?';\
+          } else {
+            agentResponse = `आपके latest ${invoices.length} invoices हैं: `;\
+            invoices.forEach((inv, idx) => {
+              agentResponse += `${idx + 1}. ${inv.customer_name} के लिए ${inv.amount} rupees. `;\
+            });
+          }
+          
+          actionData = { invoices: invoices.slice(0, 3) };
+          
+        } else if (lowerTranscript.includes('pending') || lowerTranscript.includes('payment')) {
+          // Pending payments
+          const pending = await db.collection('invoices')
+            .find({ status: 'pending' })
+            .sort({ createdAt: -1 })
+            .limit(3)
+            .toArray();
+          
+          if (pending.length === 0) {
+            agentResponse = 'बहुत बढ़िया! You have no pending payments.';\
+          } else {
+            agentResponse = `आपके ${pending.length} pending payments हैं: `;\
+            pending.forEach((inv, idx) => {
+              agentResponse += `${idx + 1}. ${inv.customer_name} से ${inv.amount} rupees. `;\
+            });
+            agentResponse += 'Should I send reminders?';\
+          }
+          
+          actionData = { pendingInvoices: pending };
+          
+        } else if (lowerTranscript.includes('remind') || lowerTranscript.includes('reminder')) {
+          // Send reminder
+          const pending = await db.collection('invoices')
+            .findOne({ status: 'pending' });\
+          
+          if (!pending) {
+            agentResponse = 'No pending payments to remind about.';\
+          } else {
+            // Send WhatsApp reminder
+            if (TWILIO_AUTH_TOKEN && TWILIO_AUTH_TOKEN !== 'your_twilio_auth_token_here') {
+              const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`;\
+              
+              const whatsappBody = new URLSearchParams({
+                From: TWILIO_WHATSAPP_NUMBER,
+                To: `whatsapp:${pending.customer_phone}`,
+                Body: `नमस्ते ${pending.customer_name}, Your payment of ₹${pending.amount} is pending. कृपया जल्द भुगतान करें। Thank you!`
+              });
+              
+              try {
+                const twilioResponse = await fetch(twilioUrl, {
+                  method: 'POST',
+                  headers: {
+                    'Authorization': 'Basic ' + Buffer.from(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`).toString('base64'),
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                  },
+                  body: whatsappBody
+                });
+                
+                if (twilioResponse.ok) {
+                  agentResponse = `Payment reminder sent to ${pending.customer_name} via WhatsApp successfully!`;\
+                } else {
+                  agentResponse = `Reminder logged for ${pending.customer_name}.`;\
+                }
+              } catch (error) {
+                agentResponse = `Reminder logged for ${pending.customer_name}.`;\
+              }
+            } else {
+              agentResponse = `Reminder logged for ${pending.customer_name}. Configure Twilio to send via WhatsApp.`;\
+            }
+            
+            actionData = { reminderSent: true, customer: pending.customer_name };
+          }
+          
+        } else if (lowerTranscript.includes('customer')) {
+          // List customers
+          const customers = await db.collection('customers')
+            .find()
+            .sort({ createdAt: -1 })
+            .limit(3)
+            .toArray();
+          
+          if (customers.length === 0) {
+            agentResponse = 'आपके पास कोई customers नहीं हैं yet.';\
+          } else {
+            agentResponse = `आपके ${customers.length} customers हैं: `;\
+            customers.forEach((cust, idx) => {
+              const pending = cust.pendingAmount || 0;
+              agentResponse += `${idx + 1}. ${cust.name}, pending है ${pending} rupees. `;\
+            });
+          }
+          
+          actionData = { customers: customers.slice(0, 3) };
+          
+        } else {
+          // Use AI agent for other queries
+          const aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${OPENAI_API_KEY}`
+            },
+            body: JSON.stringify({
+              model: 'gpt-4o-mini',
+              messages: [
+                {
+                  role: 'system',
+                  content: `You are Bharat Biz-Agent voice assistant. Respond in a mix of Hindi and English (Hinglish) in a natural, conversational way. Keep responses short and clear for voice. User said: "${transcript}". Provide helpful business information.`
+                },
+                {
+                  role: 'user',
+                  content: transcript
+                }
+              ],
+              temperature: 0.7,
+              max_tokens: 150
+            })
+          });
+          
+          if (aiResponse.ok) {
+            const aiResult = await aiResponse.json();
+            agentResponse = aiResult.choices[0].message.content;
+          } else {
+            agentResponse = 'मैं आपकी मदद कर सकता हूं। Please ask about dashboard, invoices, payments, or customers.';\
+          }
+        }
+        
+        console.log('Retell AI Response:', agentResponse);
+        
+        // Return response in Retell AI format
+        return Response.json({
+          response: agentResponse,
+          end_call: false,
+          data: actionData
+        });
+        
+      } catch (error) {
+        console.error('Retell webhook error:', error);
+        return Response.json({
+          response: 'Sorry, मुझे कुछ technical issue हुआ। Please try again.',
+          end_call: false
+        });
+      }
+    }
+    
     // Voice to text with Whisper
     if (path === 'voice/transcribe') {
       try {
