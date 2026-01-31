@@ -489,13 +489,19 @@ Respond in JSON format:
           });
           
           // Handle response regardless of content type
-          let responseData;
+          let responseData = null;
           const contentType = twilioResponse.headers.get('content-type');
+          const responseText = await twilioResponse.text();
           
-          if (contentType && contentType.includes('application/json')) {
-            responseData = await twilioResponse.json();
-          } else {
-            responseData = await twilioResponse.text();
+          try {
+            if (contentType && contentType.includes('application/json') && responseText) {
+              responseData = JSON.parse(responseText);
+            } else {
+              responseData = responseText;
+            }
+          } catch (parseError) {
+            console.error('Response parse error:', parseError);
+            responseData = responseText;
           }
           
           if (twilioResponse.ok) {
