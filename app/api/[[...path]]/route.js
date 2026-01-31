@@ -174,10 +174,18 @@ export async function POST(request) {
     // Check if this is a reminder endpoint (no body expected)
     const isReminderEndpoint = path.startsWith('payments/') && path.endsWith('/remind');
     
+    // Check if this is Retell webhook (public endpoint)
+    const isRetellWebhook = path === 'retell-webhook';
+    
     // Only parse JSON body if not a reminder endpoint
     let body = {};
     if (!isReminderEndpoint) {
       body = await request.json();
+    }
+    
+    // Public routes - Retell AI webhook
+    if (isRetellWebhook) {
+      // Retell AI Webhook handler (processed later in code)
     }
     
     // Auth routes
