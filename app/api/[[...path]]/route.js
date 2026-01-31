@@ -614,11 +614,11 @@ Respond in JSON format:
             .toArray();
           
           if (invoices.length === 0) {
-            agentResponse = 'आपके पास कोई invoices नहीं हैं। Would you like to create one?';\
+            agentResponse = 'आपके पास कोई invoices नहीं हैं। Would you like to create one?';
           } else {
-            agentResponse = `आपके latest ${invoices.length} invoices हैं: `;\
+            agentResponse = `आपके latest ${invoices.length} invoices हैं: `;
             invoices.forEach((inv, idx) => {
-              agentResponse += `${idx + 1}. ${inv.customer_name} के लिए ${inv.amount} rupees. `;\
+              agentResponse += `${idx + 1}. ${inv.customer_name} के लिए ${inv.amount} rupees. `;
             });
           }
           
@@ -633,13 +633,13 @@ Respond in JSON format:
             .toArray();
           
           if (pending.length === 0) {
-            agentResponse = 'बहुत बढ़िया! You have no pending payments.';\
+            agentResponse = 'बहुत बढ़िया! You have no pending payments.';
           } else {
-            agentResponse = `आपके ${pending.length} pending payments हैं: `;\
+            agentResponse = `आपके ${pending.length} pending payments हैं: `;
             pending.forEach((inv, idx) => {
-              agentResponse += `${idx + 1}. ${inv.customer_name} से ${inv.amount} rupees. `;\
+              agentResponse += `${idx + 1}. ${inv.customer_name} से ${inv.amount} rupees. `;
             });
-            agentResponse += 'Should I send reminders?';\
+            agentResponse += 'Should I send reminders?';
           }
           
           actionData = { pendingInvoices: pending };
@@ -647,14 +647,14 @@ Respond in JSON format:
         } else if (lowerTranscript.includes('remind') || lowerTranscript.includes('reminder')) {
           // Send reminder
           const pending = await db.collection('invoices')
-            .findOne({ status: 'pending' });\
+            .findOne({ status: 'pending' });
           
           if (!pending) {
-            agentResponse = 'No pending payments to remind about.';\
+            agentResponse = 'No pending payments to remind about.';
           } else {
             // Send WhatsApp reminder
             if (TWILIO_AUTH_TOKEN && TWILIO_AUTH_TOKEN !== 'your_twilio_auth_token_here') {
-              const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`;\
+              const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`;
               
               const whatsappBody = new URLSearchParams({
                 From: TWILIO_WHATSAPP_NUMBER,
@@ -673,15 +673,15 @@ Respond in JSON format:
                 });
                 
                 if (twilioResponse.ok) {
-                  agentResponse = `Payment reminder sent to ${pending.customer_name} via WhatsApp successfully!`;\
+                  agentResponse = `Payment reminder sent to ${pending.customer_name} via WhatsApp successfully!`;
                 } else {
-                  agentResponse = `Reminder logged for ${pending.customer_name}.`;\
+                  agentResponse = `Reminder logged for ${pending.customer_name}.`;
                 }
               } catch (error) {
-                agentResponse = `Reminder logged for ${pending.customer_name}.`;\
+                agentResponse = `Reminder logged for ${pending.customer_name}.`;
               }
             } else {
-              agentResponse = `Reminder logged for ${pending.customer_name}. Configure Twilio to send via WhatsApp.`;\
+              agentResponse = `Reminder logged for ${pending.customer_name}. Configure Twilio to send via WhatsApp.`;
             }
             
             actionData = { reminderSent: true, customer: pending.customer_name };
@@ -696,12 +696,12 @@ Respond in JSON format:
             .toArray();
           
           if (customers.length === 0) {
-            agentResponse = 'आपके पास कोई customers नहीं हैं yet.';\
+            agentResponse = 'आपके पास कोई customers नहीं हैं yet.';
           } else {
-            agentResponse = `आपके ${customers.length} customers हैं: `;\
+            agentResponse = `आपके ${customers.length} customers हैं: `;
             customers.forEach((cust, idx) => {
               const pending = cust.pendingAmount || 0;
-              agentResponse += `${idx + 1}. ${cust.name}, pending है ${pending} rupees. `;\
+              agentResponse += `${idx + 1}. ${cust.name}, pending है ${pending} rupees. `;
             });
           }
           
@@ -736,7 +736,7 @@ Respond in JSON format:
             const aiResult = await aiResponse.json();
             agentResponse = aiResult.choices[0].message.content;
           } else {
-            agentResponse = 'मैं आपकी मदद कर सकता हूं। Please ask about dashboard, invoices, payments, or customers.';\
+            agentResponse = 'मैं आपकी मदद कर सकता हूं। Please ask about dashboard, invoices, payments, or customers.';
           }
         }
         
