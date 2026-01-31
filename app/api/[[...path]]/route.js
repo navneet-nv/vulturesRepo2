@@ -596,7 +596,7 @@ Respond in JSON format:
           agentResponse = `आपका business dashboard यह है: ` +
             `Total revenue है ${stat.totalRevenue} rupees. ` +
             `आपके पास ${stat.totalCount} invoices हैं, जिनमें से ${stat.pendingCount} pending हैं। ` +
-            `और आपके ${customers} customers हैं।`;\
+            `और आपके ${customers} customers हैं।`;
           
           actionData = {
             totalRevenue: stat.totalRevenue,
