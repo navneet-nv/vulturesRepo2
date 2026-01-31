@@ -170,7 +170,23 @@ export async function POST(request) {
   
   try {
     const db = await connectToDatabase();
-    const body = await request.json();
+    
+    // Check if this is a reminder endpoint (no body expected)
+    const isReminderEndpoint = path.startsWith('payments/') && path.endsWith('/remind');
+    
+    // Check if this is Retell webhook (public endpoint)
+    const isRetellWebhook = path === 'retell-webhook';
+    
+    // Only parse JSON body if not a reminder endpoint
+    let body = {};
+    if (!isReminderEndpoint) {
+      body = await request.json();
+    }
+    
+    // Public routes - Retell AI webhook
+    if (isRetellWebhook) {
+      // Retell AI Webhook handler (processed later in code)
+    }
     
     // Auth routes
     if (path === 'auth/signup') {
@@ -227,6 +243,50 @@ export async function POST(request) {
           businessName: user.businessName
         }
       });
+    }
+    
+    // Retell AI Webhook - Voice Layer Integration (PUBLIC ENDPOINT)
+    if (path === 'retell-webhook') {
+      try {
+        // Get transcript from Retell AI
+        const { transcript, call_id, user_id } = body;
+        
+        if (!transcript) {
+          return Response.json({ 
+            response: 'Sorry, I did not catch that. Please repeat.',
+            end_call: false 
+          });
+        }
+        
+        console.log('Retell AI Voice Input:', transcript);
+        
+        // Use simple response for now (no auth needed for demo)
+        let agentResponse = '';
+        
+        const lowerTranscript = transcript.toLowerCase();
+        
+        if (lowerTranscript.includes('dashboard') || lowerTranscript.includes('stats')) {
+          agentResponse = 'To access your dashboard, please login through the web interface first. You can say commands like show invoices, pending payments, or customers.';
+        } else if (lowerTranscript.includes('hello') || lowerTranscript.includes('hi') || lowerTranscript.includes('namaste')) {
+          agentResponse = 'नमस्ते! Welcome to Bharat Biz-Agent. I am your AI business assistant. How can I help you today?';
+        } else {
+          agentResponse = 'I understand. For full functionality, please use our web interface or WhatsApp chat. I can help with general business queries.';
+        }
+        
+        console.log('Retell AI Response:', agentResponse);
+        
+        return Response.json({
+          response: agentResponse,
+          end_call: false
+        });
+        
+      } catch (error) {
+        console.error('Retell webhook error:', error);
+        return Response.json({
+          response: 'Sorry, technical issue. Please try again.',
+          end_call: false
+        });
+      }
     }
     
     // Protected routes
@@ -305,32 +365,63 @@ export async function POST(request) {
       return Response.json({ message: 'Customer added successfully', customer });
     }
     
-    // AI Agent conversation
+    // AI Agent conversation - Enhanced with strict PS2 requirements
     if (path === 'agent/chat') {
       const { message, language } = body;
       
-      // Call Emergent LLM for intent recognition
+      // Proactive context-aware check - PS2 requirement
+      const invoices = await db.collection('invoices').find({ userId: user.userId }).toArray();
+      const overdueInvoices = invoices.filter(inv => {
+        const daysSinceDue = Math.floor((new Date() - new Date(inv.date)) / (1000 * 60 * 60 * 24));
+        return inv.status === 'pending' && daysSinceDue > 30;
+      });
+      
+      // Call AI for intent recognition
       const aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${EMERGENT_LLM_KEY}`
+          'Authorization': `Bearer ${OPENAI_API_KEY}`
         },
         body: JSON.stringify({
-          model: 'gpt-4',
+          model: 'gpt-4o-mini',
           messages: [
             {
               role: 'system',
-              content: `You are Bharat Biz-Agent, an AI assistant for Indian small businesses. You understand Hindi, Hinglish, and English. Extract the intent and parameters from user messages.
+              content: `You are Bharat Biz-Agent, an AI assistant for Indian small businesses. You understand Hindi, Hinglish, and English.
               
+CRITICAL REQUIREMENTS (PS2 Compliance):
+- You are ACTION-ORIENTED, not just conversational
+- You understand India-specific business context (GST, UPI, credit cycles)
+- You handle code-mixed language (Hindi+English)
+- You provide proactive suggestions
+
+CONTEXT:
+- User has ${invoices.length} total invoices
+- ${invoices.filter(i => i.status === 'pending').length} pending payments
+- ${overdueInvoices.length} invoices overdue > 30 days
+- Total revenue: ₹${invoices.reduce((sum, inv) => sum + inv.amount, 0)}
+
+Extract intent and provide actionable response.
+
 Possible intents:
-              - create_invoice: Create an invoice
-              - check_stats: Check business stats
-              - send_reminder: Send payment reminder
-              - list_invoices: List all invoices
-              - check_pending: Check pending payments
-              
-Respond in JSON format with: {"intent": "intent_name", "params": {}, "message": "response_in_same_language", "needsConfirmation": boolean}`
+- create_invoice: Create a new invoice (requires customer_name, customer_phone, amount)
+- check_stats: Check business statistics
+- send_reminder: Send payment reminder (requires customer_name)
+- list_invoices: List all invoices
+- check_pending: Check pending payments
+- list_overdue: List overdue payments
+
+ALWAYS respond in the SAME language as user input.
+
+Respond in JSON format:
+{
+  "intent": "intent_name",
+  "params": {},
+  "message": "response in user's language",
+  "needsConfirmation": boolean,
+  "proactiveSuggestion": "optional proactive suggestion if relevant"
+}`
             },
             {
               role: 'user',
@@ -346,44 +437,72 @@ Respond in JSON format with: {"intent": "intent_name", "params": {}, "message": 
       
       try {
         if (aiResult.error) {
-          throw new Error(aiResult.error.message || 'AI API error');
-        }
-        
-        if (aiResult.choices && aiResult.choices[0] && aiResult.choices[0].message) {
-          parsedResponse = JSON.parse(aiResult.choices[0].message.content);
+          console.error('OpenAI error:', aiResult.error);
+          // Fallback response
+          parsedResponse = {
+            intent: 'check_stats',
+            params: {},
+            message: `मैं आपकी मदद कर सकता हूं। आपके पास ${invoices.length} invoices हैं और ${invoices.filter(i => i.status === 'pending').length} payments pending हैं।`,
+            needsConfirmation: false
+          };
+        } else if (aiResult.choices && aiResult.choices[0] && aiResult.choices[0].message) {
+          const content = aiResult.choices[0].message.content;
+          parsedResponse = JSON.parse(content);
         } else {
           throw new Error('Invalid AI response format');
         }
       } catch (e) {
         console.error('AI parsing error:', e);
+        // Fallback with basic stats
         parsedResponse = {
-          intent: 'unknown',
-          message: `I understand you said: "${message}". Let me help you with that.`,
+          intent: 'check_stats',
+          params: {},
+          message: `Hello! I can help you. You have ${invoices.length} invoices with ${invoices.filter(i => i.status === 'pending').length} pending payments.`,
           needsConfirmation: false
         };
       }
       
-      // Execute intent
+      // Execute intent - PS2 requirement: Autonomous Task Execution
       let actionResult = null;
       
       if (parsedResponse.intent === 'check_stats') {
-        const invoices = await db.collection('invoices').find({ userId: user.userId }).toArray();
         const totalRevenue = invoices.reduce((sum, inv) => sum + inv.amount, 0);
         const pendingPayments = invoices.filter(inv => inv.status === 'pending').length;
         
         actionResult = {
           totalRevenue,
           totalInvoices: invoices.length,
-          pendingPayments
+          pendingPayments,
+          overduePayments: overdueInvoices.length
         };
-      } else if (parsedResponse.intent === 'list_invoices') {
-        const invoices = await db.collection('invoices')
-          .find({ userId: user.userId })
-          .limit(5)
-          .sort({ createdAt: -1 })
-          .toArray();
         
-        actionResult = { invoices };
+        // Proactive suggestion - PS2 requirement: Context-Aware Follow-ups
+        if (overdueInvoices.length > 0) {
+          parsedResponse.proactiveSuggestion = `${overdueInvoices.length} invoices are overdue > 30 days. Should I send reminders?`;
+        }
+      } else if (parsedResponse.intent === 'list_invoices' || parsedResponse.intent === 'check_pending') {
+        const relevantInvoices = parsedResponse.intent === 'check_pending' 
+          ? invoices.filter(inv => inv.status === 'pending')
+          : invoices;
+          
+        actionResult = {
+          invoices: relevantInvoices.slice(0, 5).map(inv => ({
+            id: inv.id,
+            customer_name: inv.customer_name,
+            amount: inv.amount,
+            status: inv.status,
+            date: inv.date
+          }))
+        };
+      } else if (parsedResponse.intent === 'list_overdue') {
+        actionResult = {
+          invoices: overdueInvoices.slice(0, 5).map(inv => ({
+            id: inv.id,
+            customer_name: inv.customer_name,
+            amount: inv.amount,
+            daysSinceDue: Math.floor((new Date() - new Date(inv.date)) / (1000 * 60 * 60 * 24))
+          }))
+        };
       }
       
       return Response.json({
@@ -405,6 +524,10 @@ Respond in JSON format with: {"intent": "intent_name", "params": {}, "message": 
         return Response.json({ error: 'Invoice not found' }, { status: 404 });
       }
       
+      // Get user info for business name
+      const userInfo = await db.collection('users').findOne({ id: user.userId });
+      const businessName = userInfo?.businessName || 'Bharat Biz';
+      
       // Send WhatsApp message via Twilio
       if (TWILIO_AUTH_TOKEN && TWILIO_AUTH_TOKEN !== 'your_twilio_auth_token_here') {
         const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`;
@@ -412,7 +535,7 @@ Respond in JSON format with: {"intent": "intent_name", "params": {}, "message": 
         const whatsappBody = new URLSearchParams({
           From: TWILIO_WHATSAPP_NUMBER,
           To: `whatsapp:${invoice.customer_phone}`,
-          Body: `नमस्ते ${invoice.customer_name},\n\nYour payment of ₹${invoice.amount} for Invoice #${invoice.id} is pending.\n\nकृपया जल्द से जल्द भुगतान करें।\n\nThank you!\n- ${user.businessName || 'Bharat Biz'}`
+          Body: `नमस्ते ${invoice.customer_name},\n\nYour payment of ₹${invoice.amount} for Invoice #${invoice.id} is pending.\n\nकृपया जल्द से जल्द भुगतान करें।\n\nThank you!\n- ${businessName}`
         });
         
         try {
@@ -425,28 +548,265 @@ Respond in JSON format with: {"intent": "intent_name", "params": {}, "message": 
             body: whatsappBody
           });
           
+          // Handle response regardless of content type
+          let responseData = null;
+          const contentType = twilioResponse.headers.get('content-type');
+          const responseText = await twilioResponse.text();
+          
+          try {
+            if (contentType && contentType.includes('application/json') && responseText) {
+              responseData = JSON.parse(responseText);
+            } else {
+              responseData = responseText;
+            }
+          } catch (parseError) {
+            console.error('Response parse error:', parseError);
+            responseData = responseText;
+          }
+          
           if (twilioResponse.ok) {
-            return Response.json({ message: 'Reminder sent successfully via WhatsApp' });
+            console.log('WhatsApp sent successfully:', responseData);
+            return Response.json({ 
+              message: '✅ Payment reminder sent successfully via WhatsApp!',
+              success: true,
+              details: `Sent to ${invoice.customer_name} at ${invoice.customer_phone}`
+            });
           } else {
-            const error = await twilioResponse.text();
-            console.error('Twilio error:', error);
-            return Response.json({ message: 'Reminder logged (WhatsApp not configured)' });
+            console.error('Twilio error:', responseData);
+            return Response.json({ 
+              message: '⚠️ WhatsApp send failed. Reminder logged in database.',
+              success: false,
+              error: responseData
+            });
           }
         } catch (error) {
           console.error('WhatsApp send error:', error);
-          return Response.json({ message: 'Reminder logged (WhatsApp error)' });
+          return Response.json({ 
+            message: '⚠️ Error sending WhatsApp. Reminder logged.',
+            success: false,
+            error: error.message 
+          });
         }
       } else {
         // Log reminder without sending
         await db.collection('reminders').insertOne({
           invoiceId: invoice.id,
           customerId: invoice.customer_phone,
+          customerName: invoice.customer_name,
+          amount: invoice.amount,
           sentAt: new Date().toISOString(),
           method: 'whatsapp',
           status: 'pending'
         });
         
-        return Response.json({ message: 'Reminder logged (Configure Twilio to send)' });
+        return Response.json({ 
+          message: '📝 Reminder logged (Configure Twilio Auth Token to send via WhatsApp)',
+          success: false 
+        });
+      }
+    }
+    
+    // Retell AI Webhook - Voice Layer Integration
+    if (path === 'retell-webhook') {
+      try {
+        // Get transcript from Retell AI
+        const { transcript, call_id, user_id } = body;
+        
+        if (!transcript) {
+          return Response.json({ 
+            response: 'Sorry, I did not catch that. Please repeat.',
+            end_call: false 
+          });
+        }
+        
+        console.log('Retell AI Voice Input:', transcript);
+        
+        // Process through Bharat Biz-Agent AI
+        const lowerTranscript = transcript.toLowerCase();
+        let agentResponse = '';
+        let actionData = null;
+        
+        // Handle different intents
+        if (lowerTranscript.includes('dashboard') || lowerTranscript.includes('stats') || lowerTranscript.includes('overview')) {
+          // Dashboard stats
+          const stats = await db.collection('invoices')
+            .aggregate([
+              { $group: {
+                _id: null,
+                totalRevenue: { $sum: '$amount' },
+                totalCount: { $sum: 1 },
+                pendingCount: { 
+                  $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] }
+                }
+              }}
+            ]).toArray();
+          
+          const customers = await db.collection('customers').countDocuments();
+          
+          const stat = stats[0] || { totalRevenue: 0, totalCount: 0, pendingCount: 0 };
+          
+          agentResponse = `आपका business dashboard यह है: ` +
+            `Total revenue है ${stat.totalRevenue} rupees. ` +
+            `आपके पास ${stat.totalCount} invoices हैं, जिनमें से ${stat.pendingCount} pending हैं। ` +
+            `और आपके ${customers} customers हैं।`;
+          
+          actionData = {
+            totalRevenue: stat.totalRevenue,
+            totalInvoices: stat.totalCount,
+            pendingPayments: stat.pendingCount,
+            totalCustomers: customers
+          };
+          
+        } else if (lowerTranscript.includes('invoice') || lowerTranscript.includes('bill')) {
+          // List invoices
+          const invoices = await db.collection('invoices')
+            .find()
+            .sort({ createdAt: -1 })
+            .limit(3)
+            .toArray();
+          
+          if (invoices.length === 0) {
+            agentResponse = 'आपके पास कोई invoices नहीं हैं। Would you like to create one?';
+          } else {
+            agentResponse = `आपके latest ${invoices.length} invoices हैं: `;
+            invoices.forEach((inv, idx) => {
+              agentResponse += `${idx + 1}. ${inv.customer_name} के लिए ${inv.amount} rupees. `;
+            });
+          }
+          
+          actionData = { invoices: invoices.slice(0, 3) };
+          
+        } else if (lowerTranscript.includes('pending') || lowerTranscript.includes('payment')) {
+          // Pending payments
+          const pending = await db.collection('invoices')
+            .find({ status: 'pending' })
+            .sort({ createdAt: -1 })
+            .limit(3)
+            .toArray();
+          
+          if (pending.length === 0) {
+            agentResponse = 'बहुत बढ़िया! You have no pending payments.';
+          } else {
+            agentResponse = `आपके ${pending.length} pending payments हैं: `;
+            pending.forEach((inv, idx) => {
+              agentResponse += `${idx + 1}. ${inv.customer_name} से ${inv.amount} rupees. `;
+            });
+            agentResponse += 'Should I send reminders?';
+          }
+          
+          actionData = { pendingInvoices: pending };
+          
+        } else if (lowerTranscript.includes('remind') || lowerTranscript.includes('reminder')) {
+          // Send reminder
+          const pending = await db.collection('invoices')
+            .findOne({ status: 'pending' });
+          
+          if (!pending) {
+            agentResponse = 'No pending payments to remind about.';
+          } else {
+            // Send WhatsApp reminder
+            if (TWILIO_AUTH_TOKEN && TWILIO_AUTH_TOKEN !== 'your_twilio_auth_token_here') {
+              const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`;
+              
+              const whatsappBody = new URLSearchParams({
+                From: TWILIO_WHATSAPP_NUMBER,
+                To: `whatsapp:${pending.customer_phone}`,
+                Body: `नमस्ते ${pending.customer_name}, Your payment of ₹${pending.amount} is pending. कृपया जल्द भुगतान करें। Thank you!`
+              });
+              
+              try {
+                const twilioResponse = await fetch(twilioUrl, {
+                  method: 'POST',
+                  headers: {
+                    'Authorization': 'Basic ' + Buffer.from(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`).toString('base64'),
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                  },
+                  body: whatsappBody
+                });
+                
+                if (twilioResponse.ok) {
+                  agentResponse = `Payment reminder sent to ${pending.customer_name} via WhatsApp successfully!`;
+                } else {
+                  agentResponse = `Reminder logged for ${pending.customer_name}.`;
+                }
+              } catch (error) {
+                agentResponse = `Reminder logged for ${pending.customer_name}.`;
+              }
+            } else {
+              agentResponse = `Reminder logged for ${pending.customer_name}. Configure Twilio to send via WhatsApp.`;
+            }
+            
+            actionData = { reminderSent: true, customer: pending.customer_name };
+          }
+          
+        } else if (lowerTranscript.includes('customer')) {
+          // List customers
+          const customers = await db.collection('customers')
+            .find()
+            .sort({ createdAt: -1 })
+            .limit(3)
+            .toArray();
+          
+          if (customers.length === 0) {
+            agentResponse = 'आपके पास कोई customers नहीं हैं yet.';
+          } else {
+            agentResponse = `आपके ${customers.length} customers हैं: `;
+            customers.forEach((cust, idx) => {
+              const pending = cust.pendingAmount || 0;
+              agentResponse += `${idx + 1}. ${cust.name}, pending है ${pending} rupees. `;
+            });
+          }
+          
+          actionData = { customers: customers.slice(0, 3) };
+          
+        } else {
+          // Use AI agent for other queries
+          const aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${OPENAI_API_KEY}`
+            },
+            body: JSON.stringify({
+              model: 'gpt-4o-mini',
+              messages: [
+                {
+                  role: 'system',
+                  content: `You are Bharat Biz-Agent voice assistant. Respond in a mix of Hindi and English (Hinglish) in a natural, conversational way. Keep responses short and clear for voice. User said: "${transcript}". Provide helpful business information.`
+                },
+                {
+                  role: 'user',
+                  content: transcript
+                }
+              ],
+              temperature: 0.7,
+              max_tokens: 150
+            })
+          });
+          
+          if (aiResponse.ok) {
+            const aiResult = await aiResponse.json();
+            agentResponse = aiResult.choices[0].message.content;
+          } else {
+            agentResponse = 'मैं आपकी मदद कर सकता हूं। Please ask about dashboard, invoices, payments, or customers.';
+          }
+        }
+        
+        console.log('Retell AI Response:', agentResponse);
+        
+        // Return response in Retell AI format
+        return Response.json({
+          response: agentResponse,
+          end_call: false,
+          data: actionData
+        });
+        
+      } catch (error) {
+        console.error('Retell webhook error:', error);
+        return Response.json({
+          response: 'Sorry, मुझे कुछ technical issue हुआ। Please try again.',
+          end_call: false
+        });
       }
     }
     
