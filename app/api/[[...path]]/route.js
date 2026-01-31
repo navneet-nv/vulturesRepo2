@@ -170,7 +170,15 @@ export async function POST(request) {
   
   try {
     const db = await connectToDatabase();
-    const body = await request.json();
+    
+    // Check if this is a reminder endpoint (no body expected)
+    const isReminderEndpoint = path.startsWith('payments/') && path.endsWith('/remind');
+    
+    // Only parse JSON body if not a reminder endpoint
+    let body = {};
+    if (!isReminderEndpoint) {
+      body = await request.json();
+    }
     
     // Auth routes
     if (path === 'auth/signup') {
