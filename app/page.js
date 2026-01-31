@@ -1,39 +1,25 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { LayoutDashboard, FileText, CreditCard, Users, BarChart3, Settings, LogOut, Bell, Plus, Send, Mic } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Send, Mic, Paperclip, Menu, LogOut, User, MoreVertical } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { format } from 'date-fns';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
+import { format } from 'date-fns';
 
-export default function Dashboard() {
+export default function WhatsAppDashboard() {
   const router = useRouter();
+  const messagesEndRef = useRef(null);
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(null);
-  const [currentPage, setCurrentPage] = useState('dashboard');
-  const [stats, setStats] = useState({ totalRevenue: 0, totalInvoices: 0, pendingPayments: 0, totalCustomers: 0 });
-  const [invoices, setInvoices] = useState([]);
-  const [customers, setCustomers] = useState([]);
-  const [analytics, setAnalytics] = useState(null);
-  const [showInvoiceModal, setShowInvoiceModal] = useState(false);
-  const [showAIChat, setShowAIChat] = useState(false);
-  const [aiMessage, setAiMessage] = useState('');
-  const [aiResponse, setAiResponse] = useState(null);
+  const [message, setMessage] = useState('');
+  const [messages, setMessages] = useState([]);
   const [isRecording, setIsRecording] = useState(false);
   const [mediaRecorder, setMediaRecorder] = useState(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
-  const [invoiceForm, setInvoiceForm] = useState({
-    customer_name: '',
-    customer_phone: '',
-    items: [{ description: '', quantity: 1, price: 0 }]
-  });
+  const [isTyping, setIsTyping] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
 
   useEffect(() => {
     const storedToken = localStorage.getItem('token');
@@ -45,158 +31,231 @@ export default function Dashboard() {
     }
     
     setToken(storedToken);
-    setUser(JSON.parse(storedUser));
-    fetchData(storedToken);
-  }, []);
-
-  const fetchData = async (authToken) => {
-    try {
-      const headers = { 'Authorization': `Bearer ${authToken}` };
-      
-      // Fetch stats
-      const statsRes = await fetch('/api/dashboard/stats', { headers });
-      if (statsRes.ok) {
-        const statsData = await statsRes.json();
-        setStats(statsData);
+    const userData = JSON.parse(storedUser);
+    setUser(userData);
+    
+    // Welcome message
+    setMessages([
+      {
+        id: 1,
+        type: 'assistant',
+        text: `नमस्ते ${userData.name}! 👋\n\nWelcome to Bharat Biz-Agent. I'm your AI business assistant.\n\nYou can ask me:\n• "Show my dashboard"\n• "Kitne invoices hain?"\n• "Create new invoice"\n• "Pending payments dikhao"\n• "Send payment reminder"\n\nType or 🎤 speak your command!`,
+        timestamp: new Date()
       }
+    ]);
+  }, [router]);
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  const handleSendMessage = async () => {
+    if (!message.trim() || isTyping) return;
+
+    // Add user message
+    const userMessage = {
+      id: Date.now(),
+      type: 'user',
+      text: message,
+      timestamp: new Date()
+    };
+    
+    setMessages(prev => [...prev, userMessage]);
+    setMessage('');
+    setIsTyping(true);
+
+    try {
+      // Check for specific commands
+      const lowerMsg = message.toLowerCase();
       
-      // Fetch recent invoices
-      const invoicesRes = await fetch('/api/invoices?limit=5', { headers });
-      if (invoicesRes.ok) {
-        const invoicesData = await invoicesRes.json();
-        setInvoices(invoicesData);
+      if (lowerMsg.includes('dashboard') || lowerMsg.includes('stats') || lowerMsg.includes('overview')) {
+        await handleDashboardCommand();
+      } else if (lowerMsg.includes('invoice') && (lowerMsg.includes('create') || lowerMsg.includes('new') || lowerMsg.includes('banao'))) {
+        await handleCreateInvoiceCommand();
+      } else if (lowerMsg.includes('invoice') || lowerMsg.includes('bill')) {
+        await handleInvoicesCommand();
+      } else if (lowerMsg.includes('customer')) {
+        await handleCustomersCommand();
+      } else if (lowerMsg.includes('payment') || lowerMsg.includes('pending')) {
+        await handlePaymentsCommand();
+      } else if (lowerMsg.includes('reminder') || lowerMsg.includes('remind')) {
+        await handleReminderCommand();
+      } else {
+        // Use AI agent for other queries
+        await handleAIQuery(message);
       }
     } catch (error) {
-      console.error('Error fetching data:', error);
+      addAssistantMessage('Sorry, something went wrong. Please try again.');
+    } finally {
+      setIsTyping(false);
     }
   };
 
-  const fetchAllInvoices = async () => {
+  const handleDashboardCommand = async () => {
     try {
-      const res = await fetch('/api/invoices', {
+      const res = await fetch('/api/dashboard/stats', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
+      
       if (res.ok) {
-        const data = await res.json();
-        setInvoices(data);
+        const stats = await res.json();
+        const responseText = `📊 *Business Dashboard*\n\n` +
+          `💰 Total Revenue: *₹${stats.totalRevenue.toLocaleString()}*\n` +
+          `📄 Total Invoices: *${stats.totalInvoices}*\n` +
+          `⏳ Pending Payments: *${stats.pendingPayments}*\n` +
+          `👥 Total Customers: *${stats.totalCustomers}*\n\n` +
+          `What would you like to do next?`;
+        
+        addAssistantMessage(responseText);
       }
     } catch (error) {
-      console.error('Error fetching invoices:', error);
+      addAssistantMessage('Unable to fetch dashboard stats.');
     }
   };
 
-  const fetchCustomers = async () => {
+  const handleInvoicesCommand = async () => {
+    try {
+      const res = await fetch('/api/invoices?limit=5', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      if (res.ok) {
+        const invoices = await res.json();
+        
+        if (invoices.length === 0) {
+          addAssistantMessage('You have no invoices yet. Type "create new invoice" to get started!');
+          return;
+        }
+        
+        let responseText = `📄 *Recent Invoices*\n\n`;
+        invoices.forEach((inv, idx) => {
+          const status = inv.status === 'paid' ? '✅' : '⏳';
+          responseText += `${idx + 1}. ${status} *${inv.customer_name}*\n`;
+          responseText += `   ₹${inv.amount.toLocaleString()} | ${format(new Date(inv.date), 'MMM dd, yyyy')}\n`;
+          responseText += `   ID: ${inv.id}\n\n`;
+        });
+        
+        responseText += `Type "send reminder [customer name]" to send payment reminder.`;
+        addAssistantMessage(responseText);
+      }
+    } catch (error) {
+      addAssistantMessage('Unable to fetch invoices.');
+    }
+  };
+
+  const handleCustomersCommand = async () => {
     try {
       const res = await fetch('/api/customers', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      if (res.ok) {
-        const data = await res.json();
-        setCustomers(data);
-      }
-    } catch (error) {
-      console.error('Error fetching customers:', error);
-    }
-  };
-
-  const fetchAnalytics = async () => {
-    try {
-      const res = await fetch('/api/analytics', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setAnalytics(data);
-      }
-    } catch (error) {
-      console.error('Error fetching analytics:', error);
-    }
-  };
-
-  const handleLogout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    router.push('/login');
-  };
-
-  const addInvoiceItem = () => {
-    setInvoiceForm({
-      ...invoiceForm,
-      items: [...invoiceForm.items, { description: '', quantity: 1, price: 0 }]
-    });
-  };
-
-  const updateInvoiceItem = (index, field, value) => {
-    const newItems = [...invoiceForm.items];
-    newItems[index][field] = field === 'description' ? value : Number(value);
-    setInvoiceForm({ ...invoiceForm, items: newItems });
-  };
-
-  const removeInvoiceItem = (index) => {
-    const newItems = invoiceForm.items.filter((_, i) => i !== index);
-    setInvoiceForm({ ...invoiceForm, items: newItems });
-  };
-
-  const calculateTotal = () => {
-    return invoiceForm.items.reduce((sum, item) => sum + (item.quantity * item.price), 0);
-  };
-
-  const createInvoice = async () => {
-    try {
-      const total = calculateTotal();
-      const res = await fetch('/api/invoices', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          ...invoiceForm,
-          amount: total
-        })
-      });
       
       if (res.ok) {
-        toast.success('Invoice created successfully!');
-        setShowInvoiceModal(false);
-        setInvoiceForm({
-          customer_name: '',
-          customer_phone: '',
-          items: [{ description: '', quantity: 1, price: 0 }]
-        });
-        fetchData(token);
-        if (currentPage === 'invoices') {
-          fetchAllInvoices();
+        const customers = await res.json();
+        
+        if (customers.length === 0) {
+          addAssistantMessage('You have no customers yet. Create an invoice to add customers!');
+          return;
         }
-      } else {
-        toast.error('Failed to create invoice');
+        
+        let responseText = `👥 *Customers*\n\n`;
+        customers.forEach((cust, idx) => {
+          responseText += `${idx + 1}. *${cust.name}*\n`;
+          responseText += `   📱 ${cust.phone}\n`;
+          responseText += `   💰 Total: ₹${(cust.totalAmount || 0).toLocaleString()}\n`;
+          responseText += `   ⏳ Pending: ₹${(cust.pendingAmount || 0).toLocaleString()}\n\n`;
+        });
+        
+        addAssistantMessage(responseText);
       }
     } catch (error) {
-      toast.error('Error creating invoice');
+      addAssistantMessage('Unable to fetch customers.');
     }
   };
 
-  const sendReminder = async (invoiceId) => {
+  const handlePaymentsCommand = async () => {
     try {
-      const res = await fetch(`/api/payments/${invoiceId}/remind`, {
-        method: 'POST',
+      const res = await fetch('/api/invoices', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       
       if (res.ok) {
-        const data = await res.json();
-        toast.success(data.message);
-      } else {
-        toast.error('Failed to send reminder');
+        const invoices = await res.json();
+        const pending = invoices.filter(inv => inv.status === 'pending');
+        
+        if (pending.length === 0) {
+          addAssistantMessage('🎉 Great! You have no pending payments.');
+          return;
+        }
+        
+        let responseText = `⏳ *Pending Payments* (${pending.length})\n\n`;
+        pending.forEach((inv, idx) => {
+          responseText += `${idx + 1}. *${inv.customer_name}*\n`;
+          responseText += `   ₹${inv.amount.toLocaleString()}\n`;
+          responseText += `   Invoice: ${inv.id}\n`;
+          responseText += `   Date: ${format(new Date(inv.date), 'MMM dd, yyyy')}\n\n`;
+        });
+        
+        responseText += `Type "send reminder" to send WhatsApp reminders.`;
+        addAssistantMessage(responseText);
       }
     } catch (error) {
-      toast.error('Error sending reminder');
+      addAssistantMessage('Unable to fetch pending payments.');
     }
   };
 
-  const handleAIChat = async () => {
-    if (!aiMessage.trim()) return;
-    
+  const handleReminderCommand = async () => {
+    try {
+      const res = await fetch('/api/invoices', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      
+      if (res.ok) {
+        const invoices = await res.json();
+        const pending = invoices.filter(inv => inv.status === 'pending');
+        
+        if (pending.length === 0) {
+          addAssistantMessage('No pending payments to remind about!');
+          return;
+        }
+        
+        // Send reminder for first pending invoice
+        const invoice = pending[0];
+        const reminderRes = await fetch(`/api/payments/${invoice.id}/remind`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        
+        if (reminderRes.ok) {
+          const data = await reminderRes.json();
+          addAssistantMessage(`✅ ${data.message}\n\nSent to: *${invoice.customer_name}*\nAmount: *₹${invoice.amount.toLocaleString()}*`);
+        } else {
+          addAssistantMessage('Failed to send reminder. Please try again.');
+        }
+      }
+    } catch (error) {
+      addAssistantMessage('Unable to send reminder.');
+    }
+  };
+
+  const handleCreateInvoiceCommand = () => {
+    addAssistantMessage(
+      `📝 *Create New Invoice*\n\n` +
+      `Please provide the following details:\n\n` +
+      `Format: create invoice\n` +
+      `Customer: [Name]\n` +
+      `Phone: [+91XXXXXXXXXX]\n` +
+      `Items: [Description] x [Quantity] @ ₹[Price]\n\n` +
+      `Example:\n` +
+      `"Create invoice for Rahul, phone +919876543210, Cotton Fabric x 10 @ ₹500"\n\n` +
+      `Or type "quick invoice" for a simpler flow!`
+    );
+  };
+
+  const handleAIQuery = async (query) => {
     try {
       const res = await fetch('/api/agent/chat', {
         method: 'POST',
@@ -204,28 +263,53 @@ export default function Dashboard() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ message: aiMessage, language: 'hinglish' })
+        body: JSON.stringify({ message: query, language: 'hinglish' })
       });
       
       if (res.ok) {
         const data = await res.json();
-        setAiResponse(data);
+        
+        let responseText = data.message;
+        
         if (data.actionResult) {
-          fetchData(token);
+          if (data.actionResult.totalRevenue !== undefined) {
+            responseText += `\n\n📊 *Stats:*\n`;
+            responseText += `💰 Revenue: ₹${data.actionResult.totalRevenue.toLocaleString()}\n`;
+            responseText += `📄 Invoices: ${data.actionResult.totalInvoices}\n`;
+            responseText += `⏳ Pending: ${data.actionResult.pendingPayments}`;
+          } else if (data.actionResult.invoices) {
+            responseText += `\n\n📄 *Invoices:*\n`;
+            data.actionResult.invoices.forEach((inv, idx) => {
+              responseText += `\n${idx + 1}. ${inv.customer_name} - ₹${inv.amount.toLocaleString()}`;
+            });
+          }
         }
-      } else {
-        toast.error('AI agent error');
+        
+        if (data.proactiveSuggestion) {
+          responseText += `\n\n💡 *Suggestion:*\n${data.proactiveSuggestion}`;
+        }
+        
+        addAssistantMessage(responseText);
       }
     } catch (error) {
-      toast.error('Failed to communicate with AI agent');
+      addAssistantMessage('I understand your message. Let me help you with that.');
     }
+  };
+
+  const addAssistantMessage = (text) => {
+    const assistantMessage = {
+      id: Date.now(),
+      type: 'assistant',
+      text,
+      timestamp: new Date()
+    };
+    setMessages(prev => [...prev, assistantMessage]);
   };
 
   const startRecording = async () => {
     try {
-      // Check if browser supports getUserMedia
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        toast.error('Your browser does not support voice recording. Please use Chrome, Firefox, or Edge.');
+        toast.error('Your browser does not support voice recording.');
         return;
       }
 
@@ -248,18 +332,10 @@ export default function Dashboard() {
       setIsRecording(true);
       toast.success('🎤 Recording... Speak now!');
     } catch (error) {
-      console.error('Recording error:', error);
-      
-      if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
-        toast.error('🚫 Microphone access denied! Please allow microphone access in your browser settings.', {
-          duration: 5000
-        });
-      } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
-        toast.error('🎤 No microphone found! Please connect a microphone and try again.');
-      } else if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
-        toast.error('⚠️ Microphone is being used by another application. Please close other apps and try again.');
+      if (error.name === 'NotAllowedError') {
+        toast.error('🚫 Microphone access denied! Please allow microphone access.');
       } else {
-        toast.error('❌ Unable to access microphone. Error: ' + error.message);
+        toast.error('❌ Unable to access microphone.');
       }
     }
   };
@@ -279,597 +355,189 @@ export default function Dashboard() {
 
       const res = await fetch('/api/voice/transcribe', {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        },
+        headers: { 'Authorization': `Bearer ${token}` },
         body: formData
       });
 
       if (res.ok) {
         const data = await res.json();
-        setAiMessage(data.text);
+        setMessage(data.text);
         toast.success('✅ Transcription complete!');
       } else {
         toast.error('Transcription failed');
       }
     } catch (error) {
       toast.error('Failed to transcribe audio');
-      console.error('Transcription error:', error);
     } finally {
       setIsTranscribing(false);
     }
   };
 
-  useEffect(() => {
-    if (currentPage === 'invoices' && token) {
-      fetchAllInvoices();
-    } else if (currentPage === 'customers' && token) {
-      fetchCustomers();
-    } else if (currentPage === 'analytics' && token) {
-      fetchAnalytics();
-    }
-  }, [currentPage, token]);
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    router.push('/login');
+  };
 
   if (!user) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
+      <div className="flex items-center justify-center min-h-screen bg-[#0a1014]">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#00a884] mx-auto"></div>
+          <p className="mt-4 text-gray-400">Loading...</p>
         </div>
       </div>
     );
   }
 
-  const navItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'invoices', label: 'Invoices', icon: FileText },
-    { id: 'customers', label: 'Customers', icon: Users },
-    { id: 'analytics', label: 'Analytics', icon: BarChart3 },
-    { id: 'settings', label: 'Settings', icon: Settings }
-  ];
-
   return (
-    <div className="flex h-screen bg-gray-50">
-      {/* Sidebar */}
-      <aside className="w-64 bg-white border-r hidden md:block">
-        <div className="p-6">
-          <h1 className="text-2xl font-bold text-blue-600">Bharat Biz</h1>
-          <p className="text-sm text-gray-600 mt-1">AI-Powered Agent</p>
+    <div className="flex flex-col h-screen bg-[#0a1014]">
+      {/* WhatsApp-style Header */}
+      <header className="bg-[#1f2c33] px-4 py-3 flex items-center justify-between border-b border-[#2a3942]">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-green-400 to-green-600 flex items-center justify-center text-white font-bold">
+            {user.name.charAt(0).toUpperCase()}
+          </div>
+          <div>
+            <h1 className="text-white font-medium">Bharat Biz-Agent</h1>
+            <p className="text-xs text-gray-400">{user.businessName}</p>
+          </div>
         </div>
-
-        <nav className="px-4 space-y-2">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = currentPage === item.id;
-            return (
-              <button
-                key={item.id}
-                onClick={() => setCurrentPage(item.id)}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition ${
-                  isActive ? 'bg-blue-50 text-blue-600' : 'text-gray-700 hover:bg-gray-100'
-                }`}
-              >
-                <Icon size={20} />
-                <span>{item.label}</span>
-              </button>
-            );
-          })}
-        </nav>
-
-        <div className="absolute bottom-4 left-4 right-4">
-          <Button
-            onClick={() => setShowAIChat(true)}
-            className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
+        
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowMenu(!showMenu)}
+            className="p-2 hover:bg-[#2a3942] rounded-full text-gray-400"
           >
-            <Mic className="mr-2" size={18} />
-            AI Agent Chat
-          </Button>
+            <MoreVertical size={20} />
+          </button>
         </div>
-      </aside>
+        
+        {showMenu && (
+          <div className="absolute right-4 top-16 bg-[#1f2c33] rounded-lg shadow-lg border border-[#2a3942] py-2 min-w-[200px] z-50">
+            <button
+              onClick={() => {
+                setShowMenu(false);
+                setMessages([{
+                  id: Date.now(),
+                  type: 'assistant',
+                  text: '👤 *Profile*\n\nName: ' + user.name + '\nBusiness: ' + user.businessName + '\nPhone: ' + user.phone,
+                  timestamp: new Date()
+                }]);
+              }}
+              className="w-full px-4 py-2 text-left text-gray-300 hover:bg-[#2a3942] flex items-center gap-3"
+            >
+              <User size={18} />
+              Profile
+            </button>
+            <button
+              onClick={handleLogout}
+              className="w-full px-4 py-2 text-left text-red-400 hover:bg-[#2a3942] flex items-center gap-3"
+            >
+              <LogOut size={18} />
+              Logout
+            </button>
+          </div>
+        )}
+      </header>
 
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Header */}
-        <header className="bg-white border-b px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-xl font-semibold">Welcome back, {user?.name}!</h2>
-              <p className="text-sm text-gray-600">{user?.businessName}</p>
-            </div>
-
-            <div className="flex items-center gap-4">
-              <button className="p-2 hover:bg-gray-100 rounded-lg relative">
-                <Bell size={20} />
-                <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span>
-              </button>
-
-              <Button
-                onClick={handleLogout}
-                variant="outline"
-                className="text-red-600 hover:bg-red-50"
-              >
-                <LogOut size={18} className="mr-2" />
-                Logout
-              </Button>
+      {/* WhatsApp-style Chat Area */}
+      <div 
+        className="flex-1 overflow-y-auto px-4 py-4 space-y-3"
+        style={{
+          backgroundImage: `url('data:image/svg+xml,%3Csvg width="100" height="100" xmlns="http://www.w3.org/2000/svg"%3E%3Cpath d="M0 0h100v100H0z" fill="%230a1014"/%3E%3Cpath d="M20 20l5 5-5 5m15-10l5 5-5 5m15-10l5 5-5 5m15-10l5 5-5 5" stroke="%231a2329" stroke-width="1" fill="none" opacity=".3"/%3E%3C/svg%3E')`,
+          backgroundSize: '100px 100px'
+        }}
+      >
+        {messages.map((msg) => (
+          <div
+            key={msg.id}
+            className={`flex ${msg.type === 'user' ? 'justify-end' : 'justify-start'}`}
+          >
+            <div
+              className={`max-w-[80%] rounded-lg px-4 py-2 ${
+                msg.type === 'user'
+                  ? 'bg-[#005c4b] text-white rounded-br-none'
+                  : 'bg-[#1f2c33] text-gray-200 rounded-bl-none'
+              }`}
+            >
+              <p className="text-sm whitespace-pre-wrap break-words">{msg.text}</p>
+              <p className="text-[10px] mt-1 opacity-60 text-right">
+                {format(msg.timestamp, 'HH:mm')}
+              </p>
             </div>
           </div>
-        </header>
-
-        {/* Page Content */}
-        <main className="flex-1 overflow-y-auto p-6">
-          {currentPage === 'dashboard' && (
-            <div className="space-y-6">
-              {/* Stats Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                <Card>
-                  <CardHeader className="flex flex-row items-center justify-between pb-2">
-                    <CardTitle className="text-sm font-medium text-gray-600">Total Revenue</CardTitle>
-                    <CreditCard className="h-4 w-4 text-blue-600" />
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-bold">₹{stats.totalRevenue.toLocaleString()}</div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader className="flex flex-row items-center justify-between pb-2">
-                    <CardTitle className="text-sm font-medium text-gray-600">Total Invoices</CardTitle>
-                    <FileText className="h-4 w-4 text-green-600" />
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-bold">{stats.totalInvoices}</div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader className="flex flex-row items-center justify-between pb-2">
-                    <CardTitle className="text-sm font-medium text-gray-600">Pending Payments</CardTitle>
-                    <FileText className="h-4 w-4 text-orange-600" />
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-bold">{stats.pendingPayments}</div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader className="flex flex-row items-center justify-between pb-2">
-                    <CardTitle className="text-sm font-medium text-gray-600">Customers</CardTitle>
-                    <Users className="h-4 w-4 text-purple-600" />
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-bold">{stats.totalCustomers}</div>
-                  </CardContent>
-                </Card>
+        ))}
+        
+        {isTyping && (
+          <div className="flex justify-start">
+            <div className="bg-[#1f2c33] rounded-lg rounded-bl-none px-4 py-3">
+              <div className="flex gap-1">
+                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
               </div>
-
-              {/* Recent Invoices */}
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between">
-                  <CardTitle>Recent Invoices</CardTitle>
-                  <Button onClick={() => setCurrentPage('invoices')} variant="link">View all</Button>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3">
-                    {invoices.map((invoice) => (
-                      <div key={invoice.id} className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-lg">
-                        <div>
-                          <p className="font-medium">{invoice.customer_name}</p>
-                          <p className="text-sm text-gray-600">{format(new Date(invoice.date), 'MMM dd, yyyy')}</p>
-                        </div>
-                        <div className="text-right flex items-center gap-3">
-                          <div>
-                            <p className="font-semibold">₹{invoice.amount.toLocaleString()}</p>
-                            <Badge variant={invoice.status === 'paid' ? 'success' : 'warning'}>
-                              {invoice.status}
-                            </Badge>
-                          </div>
-                          {invoice.status !== 'paid' && (
-                            <Button
-                              size="sm"
-                              onClick={() => sendReminder(invoice.id)}
-                              variant="outline"
-                            >
-                              <Send size={14} className="mr-1" />
-                              Remind
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Quick Actions */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Quick Actions</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-2 gap-4">
-                    <Button
-                      onClick={() => setShowInvoiceModal(true)}
-                      className="h-24 text-lg"
-                      variant="outline"
-                    >
-                      <Plus className="mr-2" /> Create Invoice
-                    </Button>
-                    <Button
-                      onClick={() => setShowAIChat(true)}
-                      className="h-24 text-lg bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
-                    >
-                      <Mic className="mr-2" /> Ask AI Agent
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
             </div>
-          )}
-
-          {currentPage === 'invoices' && (
-            <div className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h1 className="text-2xl font-bold">Invoices</h1>
-                  <p className="text-gray-600">Manage all your invoices</p>
-                </div>
-                <Button onClick={() => setShowInvoiceModal(true)}>
-                  <Plus size={20} className="mr-2" />
-                  New Invoice
-                </Button>
-              </div>
-
-              <Card>
-                <CardContent className="p-0">
-                  <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead className="bg-gray-50 border-b">
-                        <tr>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Invoice ID</th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Customer</th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y">
-                        {invoices.map((invoice) => (
-                          <tr key={invoice.id} className="hover:bg-gray-50">
-                            <td className="px-6 py-4 text-sm font-medium">{invoice.id}</td>
-                            <td className="px-6 py-4">
-                              <div className="text-sm font-medium">{invoice.customer_name}</div>
-                              <div className="text-sm text-gray-500">{invoice.customer_phone}</div>
-                            </td>
-                            <td className="px-6 py-4 text-sm">{format(new Date(invoice.date), 'MMM dd, yyyy')}</td>
-                            <td className="px-6 py-4 text-sm font-semibold">₹{invoice.amount.toLocaleString()}</td>
-                            <td className="px-6 py-4">
-                              <Badge variant={invoice.status === 'paid' ? 'success' : 'warning'}>
-                                {invoice.status}
-                              </Badge>
-                            </td>
-                            <td className="px-6 py-4">
-                              {invoice.status !== 'paid' && (
-                                <Button
-                                  size="sm"
-                                  onClick={() => sendReminder(invoice.id)}
-                                  variant="outline"
-                                >
-                                  <Send size={14} className="mr-1" />
-                                  Remind
-                                </Button>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          )}
-
-          {currentPage === 'customers' && (
-            <div className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h1 className="text-2xl font-bold">Customers</h1>
-                  <p className="text-gray-600">Manage your customer database</p>
-                </div>
-              </div>
-
-              <Card>
-                <CardContent className="p-0">
-                  <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead className="bg-gray-50 border-b">
-                        <tr>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Phone</th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total Invoices</th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total Amount</th>
-                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Pending</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y">
-                        {customers.map((customer) => (
-                          <tr key={customer.id} className="hover:bg-gray-50">
-                            <td className="px-6 py-4 text-sm font-medium">{customer.name}</td>
-                            <td className="px-6 py-4 text-sm">{customer.phone}</td>
-                            <td className="px-6 py-4 text-sm">{customer.totalInvoices || 0}</td>
-                            <td className="px-6 py-4 text-sm font-semibold">₹{(customer.totalAmount || 0).toLocaleString()}</td>
-                            <td className="px-6 py-4 text-sm text-orange-600 font-medium">₹{(customer.pendingAmount || 0).toLocaleString()}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          )}
-
-          {currentPage === 'analytics' && (
-            <div className="space-y-6">
-              <div>
-                <h1 className="text-2xl font-bold">Analytics</h1>
-                <p className="text-gray-600">Business insights and trends</p>
-              </div>
-
-              {analytics && (
-                <div className="grid gap-6">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Payment Status Overview</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-3">
-                        <div className="flex justify-between items-center">
-                          <span className="text-green-600 font-medium">Paid Invoices</span>
-                          <span className="text-2xl font-bold">{analytics.statusBreakdown.paid}</span>
-                        </div>
-                        <div className="flex justify-between items-center">
-                          <span className="text-orange-600 font-medium">Pending Invoices</span>
-                          <span className="text-2xl font-bold">{analytics.statusBreakdown.pending}</span>
-                        </div>
-                        <div className="flex justify-between items-center">
-                          <span className="text-red-600 font-medium">Overdue Invoices</span>
-                          <span className="text-2xl font-bold">{analytics.statusBreakdown.overdue}</span>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Total Revenue</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="text-4xl font-bold text-blue-600">
-                        ₹{analytics.totalRevenue.toLocaleString()}
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-              )}
-            </div>
-          )}
-
-          {currentPage === 'settings' && (
-            <div className="space-y-6">
-              <div>
-                <h1 className="text-2xl font-bold">Settings</h1>
-                <p className="text-gray-600">Manage your account and preferences</p>
-              </div>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Business Information</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div>
-                    <Label>Business Name</Label>
-                    <Input value={user?.businessName} readOnly />
-                  </div>
-                  <div>
-                    <Label>Owner Name</Label>
-                    <Input value={user?.name} readOnly />
-                  </div>
-                  <div>
-                    <Label>Phone Number</Label>
-                    <Input value={user?.phone} readOnly />
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          )}
-        </main>
+          </div>
+        )}
+        
+        <div ref={messagesEndRef} />
       </div>
 
-      {/* Invoice Modal */}
-      <Dialog open={showInvoiceModal} onOpenChange={setShowInvoiceModal}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Create New Invoice</DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Customer Name</Label>
-                <Input
-                  value={invoiceForm.customer_name}
-                  onChange={(e) => setInvoiceForm({ ...invoiceForm, customer_name: e.target.value })}
-                  placeholder="Enter customer name"
-                />
-              </div>
-              <div>
-                <Label>Phone Number</Label>
-                <Input
-                  value={invoiceForm.customer_phone}
-                  onChange={(e) => setInvoiceForm({ ...invoiceForm, customer_phone: e.target.value })}
-                  placeholder="+919876543210"
-                />
-              </div>
-            </div>
-
-            <div>
-              <div className="flex justify-between items-center mb-3">
-                <Label>Items</Label>
-                <Button onClick={addInvoiceItem} size="sm" variant="outline">
-                  <Plus size={16} className="mr-1" /> Add Item
-                </Button>
-              </div>
-
-              <div className="space-y-3">
-                {invoiceForm.items.map((item, index) => (
-                  <div key={index} className="grid grid-cols-12 gap-3">
-                    <Input
-                      className="col-span-6"
-                      value={item.description}
-                      onChange={(e) => updateInvoiceItem(index, 'description', e.target.value)}
-                      placeholder="Item description"
-                    />
-                    <Input
-                      className="col-span-2"
-                      type="number"
-                      value={item.quantity}
-                      onChange={(e) => updateInvoiceItem(index, 'quantity', e.target.value)}
-                      placeholder="Qty"
-                    />
-                    <Input
-                      className="col-span-3"
-                      type="number"
-                      value={item.price}
-                      onChange={(e) => updateInvoiceItem(index, 'price', e.target.value)}
-                      placeholder="Price"
-                    />
-                    <Button
-                      className="col-span-1"
-                      onClick={() => removeInvoiceItem(index)}
-                      variant="destructive"
-                      size="icon"
-                    >
-                      ×
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex justify-between items-center pt-4 border-t">
-              <div className="text-right">
-                <p className="text-sm text-gray-600">Total Amount</p>
-                <p className="text-2xl font-bold">₹{calculateTotal().toLocaleString()}</p>
-              </div>
-              <div className="flex gap-3">
-                <Button onClick={() => setShowInvoiceModal(false)} variant="outline">
-                  Cancel
-                </Button>
-                <Button onClick={createInvoice}>
-                  Create Invoice
-                </Button>
-              </div>
-            </div>
+      {/* WhatsApp-style Input Bar */}
+      <div className="bg-[#1f2c33] px-4 py-3 border-t border-[#2a3942]">
+        {isTranscribing && (
+          <div className="text-center text-sm text-gray-400 mb-2">
+            🎤 Transcribing your voice...
           </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* AI Chat Modal */}
-      <Dialog open={showAIChat} onOpenChange={setShowAIChat}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>🤖 Bharat Biz AI Agent</DialogTitle>
-            <p className="text-sm text-gray-600">Ask me anything in Hindi, Hinglish, or English! 🗣️</p>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            <div className="flex gap-2">
-              <Textarea
-                value={aiMessage}
-                onChange={(e) => setAiMessage(e.target.value)}
-                placeholder="Try: 'Rahul ko 500 rupees ka bill bhejo' or 'Kitne pending payments hain?'"
-                rows={4}
-                className="flex-1"
-                disabled={isRecording || isTranscribing}
-              />
-              <div className="flex flex-col gap-2">
-                <Button
-                  onClick={isRecording ? stopRecording : startRecording}
-                  variant={isRecording ? "destructive" : "outline"}
-                  size="icon"
-                  className={`h-12 w-12 ${isRecording ? 'animate-pulse' : ''}`}
-                  disabled={isTranscribing}
-                >
-                  <Mic size={24} />
-                </Button>
-                {isRecording && (
-                  <span className="text-xs text-red-600 font-medium text-center">
-                    Recording...
-                  </span>
-                )}
-                {isTranscribing && (
-                  <span className="text-xs text-blue-600 font-medium text-center">
-                    Transcribing...
-                  </span>
-                )}
-              </div>
-            </div>
-
-            <div className="flex gap-2">
-              <Button onClick={handleAIChat} className="flex-1" disabled={isRecording || isTranscribing}>
-                <Send className="mr-2" size={18} />
-                Send Message
-              </Button>
-              {isRecording && (
-                <Button onClick={stopRecording} variant="destructive">
-                  Stop Recording
-                </Button>
-              )}
-            </div>
-
-            {aiResponse && (
-              <div className="p-4 bg-blue-50 rounded-lg">
-                <p className="font-medium text-blue-900">AI Response:</p>
-                <p className="text-gray-700 mt-2">{aiResponse.message}</p>
-                {aiResponse.needsConfirmation && (
-                  <div className="mt-3 flex gap-2">
-                    <Button size="sm" variant="outline">Confirm</Button>
-                    <Button size="sm" variant="outline">Cancel</Button>
-                  </div>
-                )}
-                {aiResponse.actionResult && (
-                  <pre className="mt-3 p-2 bg-white rounded text-xs overflow-auto">
-                    {JSON.stringify(aiResponse.actionResult, null, 2)}
-                  </pre>
-                )}
-              </div>
-            )}
-
-            <div className="p-3 bg-gradient-to-r from-purple-50 to-blue-50 rounded-lg border border-purple-200">
-              <p className="text-sm font-medium text-purple-900 mb-2">💡 Voice Commands Examples:</p>
-              <div className="space-y-1 text-xs text-purple-800">
-                <p>• "Kitne total invoices hain?"</p>
-                <p>• "Rahul ko payment reminder bhejo"</p>
-                <p>• "Show me pending payments"</p>
-                <p>• "मेरी total revenue कितनी है?"</p>
-              </div>
-            </div>
-
-            <div className="p-3 bg-orange-50 rounded-lg border border-orange-200">
-              <p className="text-sm font-medium text-orange-900 mb-2">🎤 How to Enable Microphone:</p>
-              <div className="space-y-1 text-xs text-orange-800">
-                <p><strong>Chrome/Edge:</strong> Click 🔒 in address bar → Site settings → Allow Microphone</p>
-                <p><strong>Firefox:</strong> Click 🔒 in address bar → Permissions → Microphone → Allow</p>
-                <p><strong>Safari:</strong> Safari menu → Settings → Websites → Microphone → Allow</p>
-                <p className="mt-2 text-orange-900 font-medium">⚠️ Microphone requires HTTPS or localhost</p>
-              </div>
-            </div>
+        )}
+        
+        <div className="flex items-center gap-2">
+          <button className="p-2 hover:bg-[#2a3942] rounded-full text-gray-400">
+            <Paperclip size={22} />
+          </button>
+          
+          <div className="flex-1 bg-[#2a3942] rounded-full px-4 py-2 flex items-center gap-2">
+            <input
+              type="text"
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+              placeholder="Type a message..."
+              className="flex-1 bg-transparent text-white placeholder-gray-500 outline-none text-sm"
+              disabled={isTyping || isRecording}
+            />
           </div>
-        </DialogContent>
-      </Dialog>
+
+          {message.trim() ? (
+            <button
+              onClick={handleSendMessage}
+              disabled={isTyping}
+              className="p-2 bg-[#00a884] hover:bg-[#00916e] rounded-full text-white disabled:opacity-50"
+            >
+              <Send size={20} />
+            </button>
+          ) : (
+            <button
+              onClick={isRecording ? stopRecording : startRecording}
+              className={`p-2 rounded-full ${
+                isRecording
+                  ? 'bg-red-500 hover:bg-red-600 animate-pulse'
+                  : 'bg-[#00a884] hover:bg-[#00916e]'
+              } text-white`}
+              disabled={isTranscribing}
+            >
+              <Mic size={20} />
+            </button>
+          )}
+        </div>
+        
+        <div className="mt-2 text-center">
+          <p className="text-[10px] text-gray-500">
+            🎤 Voice | 💬 Chat | 🇮🇳 Hindi/Hinglish/English
+          </p>
+        </div>
+      </div>
     </div>
   );
 }
