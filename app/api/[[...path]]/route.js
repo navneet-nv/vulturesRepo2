@@ -464,6 +464,10 @@ Respond in JSON format:
         return Response.json({ error: 'Invoice not found' }, { status: 404 });
       }
       
+      // Get user info for business name
+      const userInfo = await db.collection('users').findOne({ id: user.userId });
+      const businessName = userInfo?.businessName || 'Bharat Biz';
+      
       // Send WhatsApp message via Twilio
       if (TWILIO_AUTH_TOKEN && TWILIO_AUTH_TOKEN !== 'your_twilio_auth_token_here') {
         const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Messages.json`;
@@ -471,7 +475,7 @@ Respond in JSON format:
         const whatsappBody = new URLSearchParams({
           From: TWILIO_WHATSAPP_NUMBER,
           To: `whatsapp:${invoice.customer_phone}`,
-          Body: `नमस्ते ${invoice.customer_name},\n\nYour payment of ₹${invoice.amount} for Invoice #${invoice.id} is pending.\n\nकृपया जल्द से जल्द भुगतान करें।\n\nThank you!\n- ${user.businessName || 'Bharat Biz'}`
+          Body: `नमस्ते ${invoice.customer_name},\n\nYour payment of ₹${invoice.amount} for Invoice #${invoice.id} is pending.\n\nकृपया जल्द से जल्द भुगतान करें।\n\nThank you!\n- ${businessName}`
         });
         
         try {
@@ -484,28 +488,55 @@ Respond in JSON format:
             body: whatsappBody
           });
           
-          if (twilioResponse.ok) {
-            return Response.json({ message: 'Reminder sent successfully via WhatsApp' });
+          // Handle response regardless of content type
+          let responseData;
+          const contentType = twilioResponse.headers.get('content-type');
+          
+          if (contentType && contentType.includes('application/json')) {
+            responseData = await twilioResponse.json();
           } else {
-            const error = await twilioResponse.text();
-            console.error('Twilio error:', error);
-            return Response.json({ message: 'Reminder logged (WhatsApp not configured)' });
+            responseData = await twilioResponse.text();
+          }
+          
+          if (twilioResponse.ok) {
+            console.log('WhatsApp sent successfully:', responseData);
+            return Response.json({ 
+              message: '✅ Payment reminder sent successfully via WhatsApp!',
+              success: true,
+              details: `Sent to ${invoice.customer_name} at ${invoice.customer_phone}`
+            });
+          } else {
+            console.error('Twilio error:', responseData);
+            return Response.json({ 
+              message: '⚠️ WhatsApp send failed. Reminder logged in database.',
+              success: false,
+              error: responseData
+            });
           }
         } catch (error) {
           console.error('WhatsApp send error:', error);
-          return Response.json({ message: 'Reminder logged (WhatsApp error)' });
+          return Response.json({ 
+            message: '⚠️ Error sending WhatsApp. Reminder logged.',
+            success: false,
+            error: error.message 
+          });
         }
       } else {
         // Log reminder without sending
         await db.collection('reminders').insertOne({
           invoiceId: invoice.id,
           customerId: invoice.customer_phone,
+          customerName: invoice.customer_name,
+          amount: invoice.amount,
           sentAt: new Date().toISOString(),
           method: 'whatsapp',
           status: 'pending'
         });
         
-        return Response.json({ message: 'Reminder logged (Configure Twilio to send)' });
+        return Response.json({ 
+          message: '📝 Reminder logged (Configure Twilio Auth Token to send via WhatsApp)',
+          success: false 
+        });
       }
     }
     
