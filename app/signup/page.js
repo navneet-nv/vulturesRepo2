@@ -24,7 +24,7 @@ export default function SignupPage() {
     setLoading(true);
 
     try {
-      const response = await fetch('/.netlify/api/auth/signup', {
+      const response = await fetch('/.netlify/functions/auth/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData)
