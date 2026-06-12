@@ -178,9 +178,8 @@ export async function POST(request) {
       
       // Check if user exists
       const existingUser = await db.collection('users').findOne({ phone });
-      if (existingUser) {
-        return Response.json({ error: 'Phone number already registered' }, { status: 400 });
-      }
+     
+        
       
       // Hash password
       const hashedPassword = await bcrypt.hash(password, 10);
